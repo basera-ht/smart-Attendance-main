@@ -74,6 +74,7 @@ export const useAuth = () => {
 
   const login = async (credentials) => {
     try {
+      console.log('Login credentials:', credentials)
       const response = await authAPI.login(credentials)
       const raw = response?.data || {}
       
