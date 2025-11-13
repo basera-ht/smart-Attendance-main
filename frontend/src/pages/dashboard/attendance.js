@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import { useAuth } from '../../hooks/useAuth'
 import { attendanceAPI, employeesAPI } from '../../services/api'
 import DashboardLayout from '../../components/DashboardLayout'
+import MonthlyCalendarView from '../../components/MonthlyCalendarView'
 
 export default function Attendance() {
   const { user, hasRole, hasAnyRole } = useAuth()
@@ -12,6 +13,9 @@ export default function Attendance() {
   const [error, setError] = useState('')
   const [selectedEmployee, setSelectedEmployee] = useState('')
   const [actionLoading, setActionLoading] = useState({})
+  const [activeTab, setActiveTab] = useState('today') // 'today' or 'calendar'
+  const [todayRecord, setTodayRecord] = useState(null)
+  const [quickActionLoading, setQuickActionLoading] = useState(false)
   const isAdmin = hasAnyRole(['admin', 'hr'])
 
   useEffect(() => {
@@ -24,7 +28,27 @@ export default function Attendance() {
         if (attendanceResponse.data && attendanceResponse.data.success) {
           const data = attendanceResponse.data.data
           // Handle both array and single object responses
-          setAttendance(Array.isArray(data) ? data : [data])
+          const attendanceList = Array.isArray(data) ? data : [data]
+          setAttendance(attendanceList)
+          
+          // For employees, get their own record for quick action button
+          if (hasRole('employee')) {
+            if (attendanceList.length > 0) {
+              const myRecord = attendanceList.find(r => {
+                const empId = r.employee?._id || r.employee || r.employeeId
+                const userId = user?._id || user?.id
+                return empId && userId && (empId.toString() === userId.toString())
+              })
+              if (myRecord) {
+                setTodayRecord(myRecord)
+              } else if (attendanceList.length > 0) {
+                // If no match found but we have records, check if it's a single employee record
+                setTodayRecord(attendanceList[0])
+              }
+            } else if (!Array.isArray(data) && data) {
+              setTodayRecord(data)
+            }
+          }
         } else {
           setError('Failed to fetch attendance data')
         }
@@ -52,7 +76,7 @@ export default function Attendance() {
     }
 
     fetchData()
-  }, [isAdmin])
+  }, [isAdmin, user])
 
   const handleCheckIn = async () => {
     try {
@@ -91,6 +115,85 @@ export default function Attendance() {
       alert('Check-out failed. Please try again.')
     }
   }
+
+  const handleQuickCheckIn = async () => {
+    if (quickActionLoading) return
+    
+    try {
+      setQuickActionLoading(true)
+      const response = await attendanceAPI.checkIn({
+        employeeId: user.employeeId,
+        location: 'Office',
+        notes: 'Quick check-in'
+      })
+      
+      if (response.data && response.data.success) {
+        // Refresh data
+        const attendanceResponse = await attendanceAPI.getTodayAttendance()
+        if (attendanceResponse.data && attendanceResponse.data.success) {
+          const data = attendanceResponse.data.data
+          const attendanceList = Array.isArray(data) ? data : [data]
+          setAttendance(attendanceList)
+          if (attendanceList.length > 0) {
+            const myRecord = attendanceList.find(r => {
+              const empId = r.employee?._id || r.employee
+              return empId === user?._id || empId === user?.id
+            }) || attendanceList[0]
+            setTodayRecord(myRecord)
+          }
+        }
+        alert('✓ Check-in successful!')
+      }
+    } catch (err) {
+      console.error('Quick check-in error:', err)
+      alert(err.response?.data?.message || 'Check-in failed. Please try again.')
+    } finally {
+      setQuickActionLoading(false)
+    }
+  }
+
+  const handleQuickCheckOut = async () => {
+    if (quickActionLoading) return
+    
+    try {
+      setQuickActionLoading(true)
+      const response = await attendanceAPI.checkOut({
+        employeeId: user.employeeId,
+        location: 'Office',
+        notes: 'Quick check-out'
+      })
+      
+      if (response.data && response.data.success) {
+        // Refresh data
+        const attendanceResponse = await attendanceAPI.getTodayAttendance()
+        if (attendanceResponse.data && attendanceResponse.data.success) {
+          const data = attendanceResponse.data.data
+          const attendanceList = Array.isArray(data) ? data : [data]
+          setAttendance(attendanceList)
+          if (attendanceList.length > 0) {
+            const myRecord = attendanceList.find(r => {
+              const empId = r.employee?._id || r.employee
+              return empId === user?._id || empId === user?.id
+            }) || attendanceList[0]
+            setTodayRecord(myRecord)
+          }
+        }
+        alert('✓ Check-out successful!')
+      }
+    } catch (err) {
+      console.error('Quick check-out error:', err)
+      alert(err.response?.data?.message || 'Check-out failed. Please try again.')
+    } finally {
+      setQuickActionLoading(false)
+    }
+  }
+
+  // Determine current status for quick action button
+  const isEmployee = hasRole('employee')
+  const hasCheckedIn = todayRecord?.checkIn || todayRecord?.checkInTime || todayRecord?.checkIn?.time
+  const hasCheckedOut = todayRecord?.checkOut || todayRecord?.checkOutTime || todayRecord?.checkOut?.time
+  const canCheckIn = isEmployee && !hasCheckedIn
+  const canCheckOut = isEmployee && hasCheckedIn && !hasCheckedOut
 
   const handleAdminCheckIn = async (employeeId) => {
     if (!employeeId) {
@@ -249,7 +352,37 @@ export default function Attendance() {
           </div>
         )}
 
+        {/* Tabs */}
         <div className="bg-white shadow rounded-lg">
+          <div className="border-b border-gray-200">
+            <nav className="flex -mb-px">
+              <button
+                onClick={() => setActiveTab('today')}
+                className={`py-4 px-6 text-sm font-medium border-b-2 transition-colors ${
+                  activeTab === 'today'
+                    ? 'border-blue-500 text-blue-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                }`}
+              >
+                Today's Attendance
+              </button>
+              <button
+                onClick={() => setActiveTab('calendar')}
+                className={`py-4 px-6 text-sm font-medium border-b-2 transition-colors ${
+                  activeTab === 'calendar'
+                    ? 'border-blue-500 text-blue-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                }`}
+              >
+                Monthly Calendar
+              </button>
+            </nav>
+          </div>
+        </div>
+
+        {/* Tab Content */}
+        {activeTab === 'today' ? (
+          <div className="bg-white shadow rounded-lg">
           <div className="px-6 py-4 border-b border-gray-200">
             <h3 className="text-lg font-medium text-gray-900">Today's Attendance</h3>
           </div>
@@ -355,6 +488,52 @@ export default function Attendance() {
             </table>
           </div>
         </div>
+        ) : (
+          <MonthlyCalendarView isAdmin={isAdmin} />
+        )}
+
+        {/* Floating Quick Action Button for Employees */}
+        {isEmployee && (canCheckIn || canCheckOut) && (
+          <div className="fixed bottom-6 right-6 z-50">
+            <button
+              onClick={canCheckIn ? handleQuickCheckIn : handleQuickCheckOut}
+              disabled={quickActionLoading}
+              className={`${
+                canCheckIn 
+                  ? 'bg-green-500 hover:bg-green-600 shadow-lg hover:shadow-xl' 
+                  : 'bg-red-500 hover:bg-red-600 shadow-lg hover:shadow-xl'
+              } disabled:opacity-50 disabled:cursor-not-allowed text-white px-6 py-4 rounded-full font-semibold text-lg transition-all transform hover:scale-105 flex items-center space-x-3`}
+            >
+              {quickActionLoading ? (
+                <>
+                  <svg className="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                  <span>Processing...</span>
+                </>
+              ) : (
+                <>
+                  {canCheckIn ? (
+                    <>
+                      <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                      <span>Quick Check In</span>
+                    </>
+                  ) : (
+                    <>
+                      <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                      <span>Quick Check Out</span>
+                    </>
+                  )}
+                </>
+              )}
+            </button>
+          </div>
+        )}
       </div>
     </DashboardLayout>
   )
