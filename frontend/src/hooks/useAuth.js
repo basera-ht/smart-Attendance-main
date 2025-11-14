@@ -1,16 +1,29 @@
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import { useDispatch, useSelector } from 'react-redux'
 import { useRouter } from 'next/router'
 import { authAPI } from '../services/api'
 import { loginSuccess, logout } from '../redux/authSlice'
 
+// Helper to delay execution
+const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms))
+
+// Global flag to prevent multiple simultaneous validations
+let isValidating = false
+
 export const useAuth = () => {
   const dispatch = useDispatch()
   const router = useRouter()
   const { user, token, isAuthenticated, loading } = useSelector(state => state.auth)
+  const validationAttemptRef = useRef(0)
 
   useEffect(() => {
     const validateToken = async () => {
+      // Prevent multiple simultaneous validations
+      if (isValidating) {
+        console.log('Token validation already in progress, skipping...')
+        return
+      }
+
       const storedToken = typeof window !== 'undefined' ? localStorage.getItem('token') : null
       
       const storedRefreshToken = typeof window !== 'undefined' 
@@ -18,6 +31,7 @@ export const useAuth = () => {
         : null
       
       if (storedToken && !user) {
+        isValidating = true
         try {
           const response = await authAPI.getProfile()
           
@@ -29,12 +43,46 @@ export const useAuth = () => {
               user: userData,
               token: storedToken
             }))
+            validationAttemptRef.current = 0 // Reset on success
           } else {
             throw new Error('Invalid response structure')
           }
         } catch (error) {
           console.error('Token validation failed:', error)
-          // If token validation fails, try to refresh
+          
+          // Handle 429 Rate Limit errors
+          if (error.response?.status === 429) {
+            const retryCount = validationAttemptRef.current
+            const maxRetries = 2
+            
+            if (retryCount < maxRetries) {
+              validationAttemptRef.current++
+              
+              // Get retry-after header if available, otherwise use exponential backoff
+              const retryAfter = error.response.headers['retry-after']
+              const waitTime = retryAfter 
+                ? parseInt(retryAfter) * 1000 
+                : Math.min(2000 * Math.pow(2, retryCount), 10000) // Max 10 seconds
+              
+              console.log(`Rate limited. Retrying after ${waitTime}ms (attempt ${retryCount + 1}/${maxRetries})`)
+              
+              // Wait before retrying
+              await delay(waitTime)
+              
+              // Retry validation
+              isValidating = false
+              validateToken()
+              return
+            } else {
+              console.warn('Max retries reached for token validation. Rate limit exceeded.')
+              // Don't logout on rate limit, just log the error
+              // The user can still use the app if they have a valid token
+              isValidating = false
+              return
+            }
+          }
+          
+          // If token validation fails (non-429 errors), try to refresh
           if (storedRefreshToken) {
             try {
               const refreshResponse = await authAPI.refreshToken(storedRefreshToken)
@@ -50,29 +98,52 @@ export const useAuth = () => {
                     user: refreshedUserData,
                     token: newAccessToken
                   }))
+                  validationAttemptRef.current = 0 // Reset on success
                 } else {
                   throw new Error('Invalid response structure after refresh')
                 }
+                isValidating = false
                 return
               }
             } catch (refreshError) {
               console.error('Token refresh failed:', refreshError)
+              // If refresh also fails with 429, don't logout
+              if (refreshError.response?.status === 429) {
+                console.warn('Rate limited during token refresh. Will retry later.')
+                isValidating = false
+                return
+              }
             }
           }
-          // If refresh also fails, logout
-          dispatch(logout())
-          if (typeof window !== 'undefined') {
-            localStorage.removeItem('token')
-            localStorage.removeItem('refreshToken')
+          
+          // If refresh also fails (and not 429), logout
+          // Only logout for non-429 errors
+          if (error.response?.status !== 429) {
+            dispatch(logout())
+            if (typeof window !== 'undefined') {
+              localStorage.removeItem('token')
+              localStorage.removeItem('refreshToken')
+            }
           }
+        } finally {
+          isValidating = false
         }
       }
     }
 
-    validateToken()
+    // Add a small delay to prevent rapid successive calls
+    const timeoutId = setTimeout(() => {
+      validateToken()
+    }, 100)
+
+    return () => {
+      clearTimeout(timeoutId)
+    }
   }, [dispatch, user])
 
-  const login = async (credentials) => {
+  const login = async (credentials, retryCount = 0) => {
+    const maxRetries = 2
+    
     try {
       console.log('Login credentials:', credentials)
       const response = await authAPI.login(credentials)
@@ -124,9 +195,38 @@ export const useAuth = () => {
       // Handle different error types
       if (error.response) {
         const errorData = error.response.data || {}
+        const status = error.response.status
+        
+        // Handle 429 Rate Limit error with retry logic
+        if (status === 429) {
+          if (retryCount < maxRetries) {
+            // Get retry-after header if available, otherwise use exponential backoff
+            const retryAfter = error.response.headers['retry-after']
+            const waitTime = retryAfter 
+              ? parseInt(retryAfter) * 1000 
+              : Math.min(2000 * Math.pow(2, retryCount), 10000) // Max 10 seconds
+            
+            console.log(`Rate limited during login. Retrying after ${waitTime}ms (attempt ${retryCount + 1}/${maxRetries})`)
+            
+            // Wait before retrying
+            await delay(waitTime)
+            
+            // Retry login
+            return login(credentials, retryCount + 1)
+          } else {
+            // Max retries reached
+            const retryAfter = error.response.headers['retry-after']
+            const waitTime = retryAfter ? `${retryAfter} seconds` : 'a few minutes'
+            return { 
+              success: false, 
+              error: `Too many login attempts. Please wait ${waitTime} before trying again.`
+            }
+          }
+        }
+        
         return { 
           success: false, 
-          error: errorData.message || `Login failed: ${error.response.status} ${error.response.statusText}` || 'Login failed'
+          error: errorData.message || `Login failed: ${status} ${error.response.statusText}` || 'Login failed'
         }
       } else if (error.request) {
         return { 

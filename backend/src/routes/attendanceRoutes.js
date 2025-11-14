@@ -566,6 +566,134 @@ router.post('/admin/checkout', authenticate, authorize('admin', 'hr'), [
   }
 });
 
+// @route   POST /api/attendance/admin/update-status
+// @desc    Admin update attendance status by date and employee
+// @access  Private (Admin/HR only)
+router.post('/admin/update-status', authenticate, authorize('admin', 'hr'), [
+  body('employeeId').notEmpty().withMessage('Employee ID is required'),
+  body('date').notEmpty().withMessage('Date is required'),
+  body('status').isIn(['present', 'absent', 'late', 'half-day', 'leave']).withMessage('Invalid status'),
+  body('notes').optional().trim()
+], async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({
+        success: false,
+        message: 'Validation failed',
+        errors: errors.array()
+      });
+    }
+
+    const { employeeId, date, status, notes } = req.body;
+    
+    // Find employee
+    const employee = await User.findById(employeeId);
+    if (!employee) {
+      return res.status(404).json({
+        success: false,
+        message: 'Employee not found'
+      });
+    }
+
+    // Parse and normalize date to start of day
+    const targetDate = new Date(date);
+    targetDate.setHours(0, 0, 0, 0);
+    const endOfDay = new Date(targetDate);
+    endOfDay.setHours(23, 59, 59, 999);
+
+    // Check if date is in the past (more than today)
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
+    // Only allow editing today's date
+    if (targetDate.getTime() < today.getTime()) {
+      return res.status(400).json({
+        success: false,
+        message: 'Cannot edit past dates. Only today\'s attendance can be modified.'
+      });
+    }
+
+    // Check if date is in the future
+    if (targetDate.getTime() > today.getTime()) {
+      return res.status(400).json({
+        success: false,
+        message: 'Cannot edit future dates.'
+      });
+    }
+
+    // Find or create attendance record for the date
+    let attendance = await Attendance.findOne({
+      employee: employeeId,
+      date: {
+        $gte: targetDate,
+        $lt: new Date(targetDate.getTime() + 24 * 60 * 60 * 1000)
+      }
+    });
+
+    if (attendance) {
+      // Update existing record
+      attendance.status = status;
+      if (notes) attendance.notes = notes;
+      
+      // If marking as present and no check-in exists, create a check-in
+      if (status === 'present' && !attendance.checkIn?.time) {
+        attendance.checkIn = {
+          time: new Date(),
+          location: 'Office',
+          ipAddress: req.ip,
+          deviceInfo: req.get('User-Agent')
+        };
+      }
+      
+      // If marking as absent, clear check-in/check-out
+      if (status === 'absent') {
+        attendance.checkIn = null;
+        attendance.checkOut = null;
+        attendance.workingHours = 0;
+        attendance.overtime = 0;
+      }
+      
+      await attendance.save();
+    } else {
+      // Create new attendance record
+      const attendanceData = {
+        employee: employeeId,
+        date: targetDate,
+        status: status,
+        notes: notes || ''
+      };
+
+      // If marking as present, add check-in time
+      if (status === 'present') {
+        attendanceData.checkIn = {
+          time: new Date(),
+          location: 'Office',
+          ipAddress: req.ip,
+          deviceInfo: req.get('User-Agent')
+        };
+      }
+
+      attendance = await Attendance.create(attendanceData);
+    }
+
+    // Populate employee details for response
+    await attendance.populate('employee', 'name email employeeId department position');
+
+    res.json({
+      success: true,
+      message: `Attendance status updated to ${status} for ${employee.name}`,
+      data: { attendance }
+    });
+  } catch (error) {
+    console.error('Update attendance status error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error while updating attendance status'
+    });
+  }
+});
+
 // --- QR-based attendance ---
 // @route   GET /api/attendance/qr/generate
 // @desc    Generate short-lived QR token for check-in or check-out

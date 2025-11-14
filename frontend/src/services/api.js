@@ -108,7 +108,7 @@ export const attendanceAPI = {
   checkIn: (data) => api.post('/attendance/checkin', data),
   checkOut: (data) => api.post('/attendance/checkout', data),
   getAttendance: (params) => api.get('/attendance', { params }),
-  getEmployeeAttendance: (employeeId) => api.get(`/attendance/employee/${employeeId}`),
+  getEmployeeAttendance: (employeeId, params) => api.get(`/attendance/employee/${employeeId}`, { params }),
   updateAttendance: (id, data) => api.put(`/attendance/${id}`, data),
   getTodayAttendance: () => api.get('/attendance/today'),
   generateQR: (action = 'checkin') => api.get('/attendance/qr/generate', { params: { action } }),
@@ -116,6 +116,8 @@ export const attendanceAPI = {
   // Admin check-in/check-out
   adminCheckIn: (data) => api.post('/attendance/admin/checkin', data),
   adminCheckOut: (data) => api.post('/attendance/admin/checkout', data),
+  // Admin update attendance status by date
+  adminUpdateStatus: (data) => api.post('/attendance/admin/update-status', data),
 }
 
 // Employees API

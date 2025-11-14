@@ -13,12 +13,29 @@ export default function MonthlyCalendarView({ isAdmin }) {
   const [selectedEmployee, setSelectedEmployee] = useState(null)
   const [actionLoading, setActionLoading] = useState({})
   const [todayAttendance, setTodayAttendance] = useState({})
+  const [editingCell, setEditingCell] = useState(null) // { employeeId, day }
 
   useEffect(() => {
     if (user || isAdmin) {
       fetchData()
     }
   }, [selectedMonth, isAdmin, user])
+
+  // Close editing dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (editingCell && !event.target.closest('.editing-dropdown')) {
+        setEditingCell(null)
+      }
+    }
+
+    if (editingCell) {
+      document.addEventListener('mousedown', handleClickOutside)
+      return () => {
+        document.removeEventListener('mousedown', handleClickOutside)
+      }
+    }
+  }, [editingCell])
 
   const fetchData = async () => {
     try {
@@ -284,12 +301,94 @@ export default function MonthlyCalendarView({ isAdmin }) {
       const status = empData[dateStr].status
       // Map status to abbreviations
       if (status === 'present') return 'P'
+      if (status === 'absent') return 'A'
       if (status === 'leave') return 'UL' // Unpaid Leave
       if (status === 'half-day') return 'HD'
       return status?.toUpperCase().substring(0, 2) || null
     }
     
     return null
+  }
+
+  // Helper to get today's date string (YYYY-MM-DD format)
+  const getTodayDateString = () => {
+    const today = new Date()
+    const year = today.getFullYear()
+    const month = String(today.getMonth() + 1).padStart(2, '0')
+    const date = String(today.getDate()).padStart(2, '0')
+    return `${year}-${month}-${date}`
+  }
+
+  const isToday = (day) => {
+    if (!day) return false
+    const todayStr = getTodayDateString()
+    const cellDateStr = getDateString(day)
+    return cellDateStr === todayStr
+  }
+
+  const isPastDate = (day) => {
+    if (!day) return true
+    const todayStr = getTodayDateString()
+    const cellDateStr = getDateString(day)
+    if (!cellDateStr) return true
+    return cellDateStr < todayStr
+  }
+
+  const isFutureDate = (day) => {
+    if (!day) return false
+    const todayStr = getTodayDateString()
+    const cellDateStr = getDateString(day)
+    if (!cellDateStr) return false
+    return cellDateStr > todayStr
+  }
+
+  const handleCellClick = (employeeId, day) => {
+    if (!isAdmin) return
+    if (!day) return
+    if (isPastDate(day)) return // Don't allow editing past dates
+    if (!isToday(day)) return // Only allow editing today's date
+    
+    // Check if there's a leave for this date (leaves can't be edited)
+    const dateStr = getDateString(day)
+    const empLeaveData = leaveData[employeeId]
+    if (empLeaveData && empLeaveData[dateStr]) {
+      alert('Cannot edit leave dates. Please manage leaves from the Leaves page.')
+      return
+    }
+
+    setEditingCell({ employeeId, day })
+  }
+
+  const handleUpdateStatus = async (employeeId, day, status) => {
+    if (!employeeId || !day) return
+
+    try {
+      const dateStr = getDateString(day)
+      const loadingKey = `update-${employeeId}-${day}`
+      setActionLoading(prev => ({ ...prev, [loadingKey]: true }))
+
+      const response = await attendanceAPI.adminUpdateStatus({
+        employeeId,
+        date: dateStr,
+        status,
+        notes: `Status updated from calendar by ${user?.name || 'Admin'}`
+      })
+
+      if (response.data?.success) {
+        // Refresh calendar data
+        await fetchData()
+        setEditingCell(null)
+        alert(`✓ Status updated to ${status === 'present' ? 'Present' : status === 'absent' ? 'Absent' : status}`)
+      } else {
+        alert(response.data?.message || 'Failed to update status')
+      }
+    } catch (err) {
+      console.error('Update status error:', err)
+      alert(err.response?.data?.message || 'Failed to update status. Please try again.')
+    } finally {
+      const loadingKey = `update-${employeeId}-${day}`
+      setActionLoading(prev => ({ ...prev, [loadingKey]: false }))
+    }
   }
 
   const getCellColor = (day, status) => {
@@ -312,8 +411,11 @@ export default function MonthlyCalendarView({ isAdmin }) {
     if (status === 'P') {
       return 'bg-green-100' // Present
     }
+    if (status === 'A') {
+      return 'bg-red-300 text-white' // Absent
+    }
     if (status === 'PL' || status === 'UL' || status === 'ML') {
-      return 'bg-red-100' // Leave types - Red color
+      return 'bg-red-500 text-white' // Leave types - Red color
     }
     if (status === 'E') {
       return 'bg-blue-100' // Emergency
@@ -488,12 +590,76 @@ export default function MonthlyCalendarView({ isAdmin }) {
                     {monthDates.map(({ day, date }) => {
                       const status = getAttendanceStatus(employeeId, day)
                       const cellColor = getCellColor(day, status)
+                      const isTodayDate = isToday(day)
+                      const isPast = isPastDate(day)
+                      const isFuture = isFutureDate(day)
+                      const isEditing = editingCell?.employeeId === employeeId && editingCell?.day === day
+                      const dateStr = getDateString(day)
+                      const hasLeave = leaveData[employeeId] && leaveData[employeeId][dateStr]
+                      
+                      // Only today's date should be editable (not past, not future, is today, no leave, and admin)
+                      const isEditable = isAdmin && isTodayDate && !isPast && !isFuture && !hasLeave
+                      
                       return (
                         <td
                           key={day}
-                          className={`border border-gray-300 p-2 text-center text-sm font-semibold ${cellColor}`}
+                          className={`border border-gray-300 p-2 text-center text-sm font-semibold ${cellColor} ${
+                            isEditable ? 'cursor-pointer hover:ring-2 hover:ring-blue-400 relative' : ''
+                          } ${isPast ? 'opacity-60' : ''} ${isFuture ? 'opacity-40' : ''}`}
+                          onClick={() => handleCellClick(employeeId, day)}
+                          title={
+                            isEditable 
+                              ? 'Click to edit status' 
+                              : isPast 
+                                ? 'Past dates cannot be edited' 
+                                : isFuture
+                                  ? 'Future dates cannot be edited'
+                                  : hasLeave
+                                    ? 'Leave dates cannot be edited'
+                                    : ''
+                          }
                         >
-                          {status || ''}
+                          {isEditing ? (
+                            <div className="editing-dropdown absolute z-50 bg-white border-2 border-blue-500 rounded-lg shadow-xl p-2 min-w-[140px]" 
+                                 onClick={(e) => e.stopPropagation()}
+                                 style={{ 
+                                   left: '50%', 
+                                   transform: 'translateX(-50%)', 
+                                   top: 'calc(100% + 4px)',
+                                   position: 'absolute'
+                                 }}>
+                              <div className="text-xs font-semibold mb-2 text-gray-700 text-center">Update Status</div>
+                              <div className="flex flex-col gap-1.5">
+                                <button
+                                  onClick={() => handleUpdateStatus(employeeId, day, 'present')}
+                                  disabled={actionLoading[`update-${employeeId}-${day}`]}
+                                  className="bg-green-500 hover:bg-green-600 text-white px-3 py-1.5 rounded text-xs font-semibold disabled:opacity-50 transition-colors"
+                                >
+                                  {actionLoading[`update-${employeeId}-${day}`] ? 'Updating...' : 'Present'}
+                                </button>
+                                <button
+                                  onClick={() => handleUpdateStatus(employeeId, day, 'absent')}
+                                  disabled={actionLoading[`update-${employeeId}-${day}`]}
+                                  className="bg-red-500 hover:bg-red-600 text-white px-3 py-1.5 rounded text-xs font-semibold disabled:opacity-50 transition-colors"
+                                >
+                                  {actionLoading[`update-${employeeId}-${day}`] ? 'Updating...' : 'Absent'}
+                                </button>
+                                <button
+                                  onClick={() => setEditingCell(null)}
+                                  className="bg-gray-300 hover:bg-gray-400 text-gray-800 px-3 py-1.5 rounded text-xs font-semibold transition-colors"
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            <>
+                              {status || ''}
+                              {isEditable && (
+                                <span className="absolute top-0 right-0 w-2 h-2 bg-blue-500 rounded-full" title="Editable - Click to change status"></span>
+                              )}
+                            </>
+                          )}
                         </td>
                       )
                     })}
@@ -517,24 +683,30 @@ export default function MonthlyCalendarView({ isAdmin }) {
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
           <div>
             <p className="font-semibold mb-1">Attendance:</p>
-            <div className="flex items-center space-x-2">
-              <div className="w-6 h-6 bg-green-100 border border-gray-300"></div>
-              <span>P - Present</span>
+            <div className="space-y-1">
+              <div className="flex items-center space-x-2">
+                <div className="w-6 h-6 bg-green-100 border border-gray-300"></div>
+                <span>P - Present</span>
+              </div>
+              <div className="flex items-center space-x-2">
+                <div className="w-6 h-6 bg-red-300 border border-gray-300"></div>
+                <span>A - Absent</span>
+              </div>
             </div>
           </div>
           <div>
             <p className="font-semibold mb-1">Leave:</p>
             <div className="space-y-1">
               <div className="flex items-center space-x-2">
-                <div className="w-6 h-6 bg-red-100 border border-gray-300"></div>
+                <div className="w-6 h-6 bg-red-500 border border-gray-300"></div>
                 <span>PL - Paid</span>
               </div>
               <div className="flex items-center space-x-2">
-                <div className="w-6 h-6 bg-red-100 border border-gray-300"></div>
+                <div className="w-6 h-6 bg-red-500 border border-gray-300"></div>
                 <span>UL - Unpaid</span>
               </div>
               <div className="flex items-center space-x-2">
-                <div className="w-6 h-6 bg-red-100 border border-gray-300"></div>
+                <div className="w-6 h-6 bg-red-500 border border-gray-300"></div>
                 <span>ML - Medical</span>
               </div>
             </div>

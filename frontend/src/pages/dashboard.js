@@ -35,6 +35,26 @@ export default function Dashboard() {
 
   const isEmployee = hasRole('employee')
 
+  // Helper function to retry API calls on 429 errors
+  const retryApiCall = async (apiCall, retryCount = 0, maxRetries = 2) => {
+    try {
+      return await apiCall()
+    } catch (error) {
+      if (error.response?.status === 429 && retryCount < maxRetries) {
+        const retryAfter = error.response.headers['retry-after']
+        const waitTime = retryAfter 
+          ? parseInt(retryAfter) * 1000 
+          : Math.min(2000 * Math.pow(2, retryCount), 10000) // Max 10 seconds
+        
+        console.log(`Rate limited. Retrying after ${waitTime}ms (attempt ${retryCount + 1}/${maxRetries})`)
+        
+        await new Promise(resolve => setTimeout(resolve, waitTime))
+        return retryApiCall(apiCall, retryCount + 1, maxRetries)
+      }
+      throw error
+    }
+  }
+
   useEffect(() => {
     setHasMounted(true)
 
@@ -46,12 +66,12 @@ export default function Dashboard() {
         }
         
         if (isEmployee) {
-          // Fetch employee-specific data
+          // Fetch employee-specific data with retry logic
           const [attendanceResponse, tasksResponse, leavesResponse, statsResponse] = await Promise.all([
-            attendanceAPI.getTodayAttendance(),
-            tasksAPI.getTasks(),
-            leavesAPI.getLeaves({ status: 'approved', limit: 5 }),
-            leavesAPI.getLeaveStats()
+            retryApiCall(() => attendanceAPI.getTodayAttendance()),
+            retryApiCall(() => tasksAPI.getTasks()),
+            retryApiCall(() => leavesAPI.getLeaves({ status: 'approved', limit: 5 })),
+            retryApiCall(() => leavesAPI.getLeaveStats())
           ])
           
           if (attendanceResponse.data?.success) {
@@ -80,12 +100,10 @@ export default function Dashboard() {
             setLeaveStats(statsResponse.data.data)
           }
         } else {
-          // Admin/HR dashboard data
-          const [statsResponse] = await Promise.all([
-            analyticsAPI.getDashboardStats()
-          ])
+          // Admin/HR dashboard data with retry logic
+          const statsResponse = await retryApiCall(() => analyticsAPI.getDashboardStats())
         
-        if (statsResponse.data && statsResponse.data.success) {
+        if (statsResponse?.data && statsResponse.data.success) {
           setStats(statsResponse.data.data)
           
           const weeklyData = statsResponse.data.data.weeklyAttendance || []
@@ -137,6 +155,13 @@ export default function Dashboard() {
           response: error.response?.data,
           status: error.response?.status
         })
+        
+        // Handle 429 errors gracefully
+        if (error.response?.status === 429) {
+          console.warn('Rate limit exceeded while fetching dashboard data. Using cached or empty data.')
+          // Don't show error to user, just use empty/default data
+        }
+        
         setStats({
           totalEmployees: 0,
           presentToday: 0,
@@ -163,8 +188,8 @@ export default function Dashboard() {
       
       if (response.data && response.data.success) {
         alert('Check-in successful!')
-        // Refresh attendance data
-        const attendanceResponse = await attendanceAPI.getTodayAttendance()
+        // Refresh attendance data with retry logic
+        const attendanceResponse = await retryApiCall(() => attendanceAPI.getTodayAttendance())
         if (attendanceResponse.data?.success) {
           const attendanceData = attendanceResponse.data.data
           if (attendanceData && !Array.isArray(attendanceData)) {
@@ -195,8 +220,8 @@ export default function Dashboard() {
       
       if (response.data && response.data.success) {
         alert('Check-out successful!')
-        // Refresh attendance data
-        const attendanceResponse = await attendanceAPI.getTodayAttendance()
+        // Refresh attendance data with retry logic
+        const attendanceResponse = await retryApiCall(() => attendanceAPI.getTodayAttendance())
         if (attendanceResponse.data?.success) {
           const attendanceData = attendanceResponse.data.data
           if (attendanceData && !Array.isArray(attendanceData)) {
@@ -338,8 +363,8 @@ export default function Dashboard() {
           setEmployeeList(employees)
         }
       } else {
-        // Get today's attendance records using the today endpoint
-        const todayResponse = await attendanceAPI.getTodayAttendance()
+        // Get today's attendance records using the today endpoint with retry logic
+        const todayResponse = await retryApiCall(() => attendanceAPI.getTodayAttendance())
         
         if (todayResponse?.data?.success) {
           // Handle both array and single object responses
@@ -350,14 +375,14 @@ export default function Dashboard() {
           let allRecords = attendanceRecords
           
           if (attendanceRecords.length === 0 || !attendanceRecords[0]?.employee) {
-            // Fallback: Get from attendance endpoint
+            // Fallback: Get from attendance endpoint with retry logic
             const today = new Date()
             today.setHours(0, 0, 0, 0)
-            const response = await attendanceAPI.getAttendance({
+            const response = await retryApiCall(() => attendanceAPI.getAttendance({
               startDate: today.toISOString().split('T')[0],
               endDate: today.toISOString().split('T')[0],
               limit: 1000
-            })
+            }))
             
             if (response?.data?.success) {
               const attendanceData = response.data.data || {}

@@ -18,13 +18,33 @@ export default function Attendance() {
   const [quickActionLoading, setQuickActionLoading] = useState(false)
   const isAdmin = hasAnyRole(['admin', 'hr'])
 
+  // Helper function to retry API calls on 429 errors
+  const retryApiCall = async (apiCall, retryCount = 0, maxRetries = 2) => {
+    try {
+      return await apiCall()
+    } catch (error) {
+      if (error.response?.status === 429 && retryCount < maxRetries) {
+        const retryAfter = error.response.headers['retry-after']
+        const waitTime = retryAfter 
+          ? parseInt(retryAfter) * 1000 
+          : Math.min(2000 * Math.pow(2, retryCount), 10000) // Max 10 seconds
+        
+        console.log(`Rate limited. Retrying after ${waitTime}ms (attempt ${retryCount + 1}/${maxRetries})`)
+        
+        await new Promise(resolve => setTimeout(resolve, waitTime))
+        return retryApiCall(apiCall, retryCount + 1, maxRetries)
+      }
+      throw error
+    }
+  }
+
   useEffect(() => {
     const fetchData = async () => {
       try {
         setLoading(true)
         
-        // Fetch attendance
-        const attendanceResponse = await attendanceAPI.getTodayAttendance()
+        // Fetch attendance with retry logic
+        const attendanceResponse = await retryApiCall(() => attendanceAPI.getTodayAttendance())
         if (attendanceResponse.data && attendanceResponse.data.success) {
           const data = attendanceResponse.data.data
           // Handle both array and single object responses
@@ -53,10 +73,10 @@ export default function Attendance() {
           setError('Failed to fetch attendance data')
         }
 
-        // Fetch employees if admin
+        // Fetch employees if admin with retry logic
         if (isAdmin) {
           try {
-            const employeesResponse = await employeesAPI.getEmployees()
+            const employeesResponse = await retryApiCall(() => employeesAPI.getEmployees())
             if (employeesResponse.data && employeesResponse.data.success) {
               const employeesData = employeesResponse.data.data
               // Handle paginated response
@@ -69,7 +89,13 @@ export default function Attendance() {
         }
       } catch (err) {
         console.error('Error fetching attendance:', err)
-        setError('Error loading attendance data')
+        if (err.response?.status === 429) {
+          const retryAfter = err.response.headers['retry-after']
+          const waitTime = retryAfter ? `${retryAfter} seconds` : 'a few minutes'
+          setError(`Rate limit exceeded. Please wait ${waitTime} and refresh the page.`)
+        } else {
+          setError(err.response?.data?.message || 'Error loading attendance data')
+        }
       } finally {
         setLoading(false)
       }
@@ -128,8 +154,8 @@ export default function Attendance() {
       })
       
       if (response.data && response.data.success) {
-        // Refresh data
-        const attendanceResponse = await attendanceAPI.getTodayAttendance()
+        // Refresh data with retry logic
+        const attendanceResponse = await retryApiCall(() => attendanceAPI.getTodayAttendance())
         if (attendanceResponse.data && attendanceResponse.data.success) {
           const data = attendanceResponse.data.data
           const attendanceList = Array.isArray(data) ? data : [data]
@@ -164,8 +190,8 @@ export default function Attendance() {
       })
       
       if (response.data && response.data.success) {
-        // Refresh data
-        const attendanceResponse = await attendanceAPI.getTodayAttendance()
+        // Refresh data with retry logic
+        const attendanceResponse = await retryApiCall(() => attendanceAPI.getTodayAttendance())
         if (attendanceResponse.data && attendanceResponse.data.success) {
           const data = attendanceResponse.data.data
           const attendanceList = Array.isArray(data) ? data : [data]
