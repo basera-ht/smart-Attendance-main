@@ -2,50 +2,10 @@
 import { useState } from 'react'
 import DashboardLayout from '../../components/DashboardLayout'
 import { Calendar, CalendarDays } from 'lucide-react'
+import { fixedHolidays, optionalHolidays } from '../../utils/holidays'
 
 export default function HolidaysPage() {
   const [activeTab, setActiveTab] = useState('fixed') // 'fixed' or 'optional'
-
-  // Fixed Holidays for 2025
-  const fixedHolidays = [
-    { id: 1, name: "New Year's Day", date: "01.01.2025", month: "January", day: "Wednesday" },
-    { id: 2, name: "New Year Celebration", date: "02.01.2025", month: "January", day: "Thursday" },
-    { id: 3, name: "State Day", date: "20.02.2025", month: "February", day: "Thursday" },
-    { id: 4, name: "Good Friday", date: "18.04.2025", month: "April", day: "Friday" },
-    { id: 5, name: "Remna Ni", date: "30.06.2025", month: "June", day: "Monday" },
-    { id: 6, name: "Independence Day", date: "15.08.2025", month: "August", day: "Friday" },
-    { id: 7, name: "Mahatma Gandhi's Birthday", date: "02.10.2025", month: "October", day: "Thursday" },
-    { id: 8, name: "Christmas Eve", date: "24.12.2025", month: "December", day: "Wednesday" },
-    { id: 9, name: "Christmas Day", date: "25.12.2025", month: "December", day: "Thursday" },
-    { id: 10, name: "Christmas Celebration", date: "26.12.2025", month: "December", day: "Friday" }
-  ]
-
-  // Optional Holidays for 2025
-  const optionalHolidays = [
-    { id: 1, name: "New Year Celebration", date: "03.01.2025", month: "January", day: "Friday" },
-    { id: 2, name: "Guru Ravi Das' Birthday", date: "12.02.2025", month: "February", day: "Wednesday" },
-    { id: 3, name: "Chapchar Kut", date: "07.03.2025", month: "March", day: "Friday" },
-    { id: 4, name: "Holi", date: "14.03.2025", month: "March", day: "Friday" },
-    { id: 5, name: "Id-ul Fitr", date: "31.03.2025", month: "March", day: "Monday" },
-    { id: 6, name: "Mahavir Jayanti", date: "10.04.2025", month: "April", day: "Thursday" },
-    { id: 7, name: "Meshadi (Tamil New Year's)", date: "14.04.2025", month: "April", day: "Monday" },
-    { id: 8, name: "Vaisakhadi (Bengali) Bahag Bihu (Assam)", date: "15.04.2025", month: "April", day: "Tuesday" },
-    { id: 9, name: "Easter Monday", date: "21.04.2025", month: "April", day: "Monday" },
-    { id: 10, name: "Guru Rabindranath's Birthday", date: "09.05.2025", month: "May", day: "Friday" },
-    { id: 11, name: "Buddha Purnima", date: "12.05.2025", month: "May", day: "Monday" },
-    { id: 12, name: "Rath Yatra", date: "27.06.2025", month: "June", day: "Friday" },
-    { id: 13, name: "Ganesh Chaturthi/ Vinayaka Chaturthi", date: "27.08.2025", month: "August", day: "Wednesday" },
-    { id: 14, name: "Milad-un-Nabi or Id-e-Milad (Birthday of Prophet Mohamed)", date: "05.09.2025", month: "September", day: "Friday" },
-    { id: 15, name: "Dussehra (Saptami)", date: "29.09.2025", month: "September", day: "Monday" },
-    { id: 16, name: "Dussehra (Mahashtami)", date: "30.09.2025", month: "September", day: "Tuesday" },
-    { id: 17, name: "Dussehra (Mahanavmi)", date: "01.10.2025", month: "October", day: "Wednesday" },
-    { id: 18, name: "Maharishi Valmiki's Birthday", date: "07.10.2025", month: "October", day: "Tuesday" },
-    { id: 19, name: "Diwali (Deepavalli)", date: "20.10.2025", month: "October", day: "Monday" },
-    { id: 20, name: "Bhai Duj", date: "23.10.2025", month: "October", day: "Thursday" },
-    { id: 21, name: "Guru Nanak's Birthday", date: "05.11.2025", month: "November", day: "Wednesday" },
-    { id: 22, name: "Guru Teg Bahadur's Martyrdom Day", date: "24.11.2025", month: "November", day: "Monday" },
-    { id: 23, name: "New Year's Eve", date: "31.12.2025", month: "December", day: "Wednesday" }
-  ]
 
   // Group holidays by month for better display
   const groupByMonth = (holidays) => {

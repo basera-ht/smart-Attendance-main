@@ -2,6 +2,7 @@
 import { useEffect, useState } from 'react'
 import { attendanceAPI, employeesAPI, leavesAPI } from '../services/api'
 import { useAuth } from '../hooks/useAuth'
+import { isHoliday, formatDateForComparison } from '../utils/holidays'
 
 export default function MonthlyCalendarView({ isAdmin }) {
   const { user } = useAuth()
@@ -82,8 +83,12 @@ export default function MonthlyCalendarView({ isAdmin }) {
           
           // Mark all days in leave range
           const currentDate = new Date(start)
-          while (currentDate <= end) {
-            const dateStr = currentDate.toISOString().split('T')[0]
+          const endDate = new Date(end)
+          while (currentDate <= endDate) {
+            // Use formatDateForComparison to avoid timezone issues
+            const dateStr = formatDateForComparison(currentDate)
+            if (!dateStr) break // Skip if date is invalid
+            
             // Map leave types to abbreviations
             let leaveCode = 'UL' // Default to Unpaid Leave
             if (leave.leaveType === 'vacation') leaveCode = 'PL' // Paid Leave
@@ -134,7 +139,16 @@ export default function MonthlyCalendarView({ isAdmin }) {
         const organized = {}
         attendanceList.forEach(record => {
           const empId = record.employee?._id || record.employee || 'unknown'
-          const dateStr = new Date(record.date).toISOString().split('T')[0]
+          // Handle date conversion - avoid timezone issues
+          let dateStr
+          if (typeof record.date === 'string' && record.date.match(/^\d{4}-\d{2}-\d{2}/)) {
+            // Already in YYYY-MM-DD format
+            dateStr = record.date.split('T')[0] // Remove time part if present
+          } else {
+            // Convert Date object to YYYY-MM-DD using local date components
+            const date = new Date(record.date)
+            dateStr = formatDateForComparison(date)
+          }
           
           if (!organized[empId]) {
             organized[empId] = {}
@@ -282,14 +296,21 @@ export default function MonthlyCalendarView({ isAdmin }) {
     const year = selectedMonth.getFullYear()
     const month = selectedMonth.getMonth()
     const date = new Date(year, month, day)
-    return date.toISOString().split('T')[0]
+    // Use formatDateForComparison to avoid timezone issues with toISOString()
+    return formatDateForComparison(date)
   }
 
   const getAttendanceStatus = (employeeId, day) => {
     if (!day) return null
     const dateStr = getDateString(day)
     
-    // Check leave first (leaves override attendance)
+    // Check if it's a holiday first (holidays override everything)
+    const holiday = isHoliday(dateStr, true) // Include optional holidays
+    if (holiday) {
+      return 'H' // Holiday
+    }
+    
+    // Check leave (leaves override attendance)
     const empLeaveData = leaveData[employeeId]
     if (empLeaveData && empLeaveData[dateStr]) {
       return empLeaveData[dateStr]
@@ -348,8 +369,16 @@ export default function MonthlyCalendarView({ isAdmin }) {
     if (isPastDate(day)) return // Don't allow editing past dates
     if (!isToday(day)) return // Only allow editing today's date
     
-    // Check if there's a leave for this date (leaves can't be edited)
     const dateStr = getDateString(day)
+    
+    // Check if it's a holiday (holidays can't be edited)
+    const holiday = isHoliday(dateStr, true)
+    if (holiday) {
+      alert(`Cannot edit holiday dates. ${holiday.name} is a holiday.`)
+      return
+    }
+    
+    // Check if there's a leave for this date (leaves can't be edited)
     const empLeaveData = leaveData[employeeId]
     if (empLeaveData && empLeaveData[dateStr]) {
       alert('Cannot edit leave dates. Please manage leaves from the Leaves page.')
@@ -396,16 +425,18 @@ export default function MonthlyCalendarView({ isAdmin }) {
     
     const date = new Date(selectedMonth.getFullYear(), selectedMonth.getMonth(), day)
     const dayOfWeek = date.getDay()
+    const dateStr = getDateString(day)
+    
+    // Check if it's a holiday (holidays override weekend colors)
+    const holiday = isHoliday(dateStr, true) // Include optional holidays
+    if (holiday) {
+      return 'bg-yellow-100' // Holiday - yellow background
+    }
     
     // Weekend (Saturday = 6, Sunday = 0)
     if (dayOfWeek === 0 || dayOfWeek === 6) {
       return 'bg-orange-100' // Office close
     }
-    
-    // Holiday (you can add holiday logic here)
-    // if (isHoliday(date)) {
-    //   return 'bg-yellow-100'
-    // }
     
     // Status-based colors
     if (status === 'P') {
@@ -435,16 +466,19 @@ export default function MonthlyCalendarView({ isAdmin }) {
   const month = selectedMonth.getMonth()
   const monthName = monthNames[month]
 
-  // Get all dates in month for header
-  const monthDates = []
-  for (let day = 1; day <= new Date(year, month + 1, 0).getDate(); day++) {
+  // Get all dates in month for header - must match the body structure exactly
+  // Use the same structure as getDaysInMonth() to ensure perfect alignment
+  const monthDates = days.map(day => {
+    if (day === null) {
+      return { day: null, dayName: null, date: null }
+    }
     const date = new Date(year, month, day)
-    monthDates.push({
+    return {
       day,
       dayName: getDayName(date.getDay()),
       date
-    })
-  }
+    }
+  })
 
   if (loading) {
     return (
@@ -497,18 +531,36 @@ export default function MonthlyCalendarView({ isAdmin }) {
               <th className="border border-gray-300 bg-gray-50 p-2 text-left font-semibold text-sm sticky left-0 z-10 bg-gray-50">
                 Employee
               </th>
-              {monthDates.map(({ day, dayName, date }) => {
+              {monthDates.map(({ day, dayName, date }, index) => {
+                if (!day || !date) {
+                  return (
+                    <th
+                      key={`empty-${index}`}
+                      className="border border-gray-300 p-2 text-center text-xs font-semibold bg-white"
+                    >
+                    </th>
+                  )
+                }
                 const dayOfWeek = date.getDay()
                 const isWeekend = dayOfWeek === 0 || dayOfWeek === 6
+                const dateStr = formatDateForComparison(date)
+                const holiday = isHoliday(dateStr, true) // Include optional holidays
+                const isHolidayDate = !!holiday
                 return (
                   <th
                     key={day}
                     className={`border border-gray-300 p-2 text-center text-xs font-semibold ${
-                      isWeekend ? 'bg-orange-100' : 'bg-gray-50'
+                      isHolidayDate ? 'bg-yellow-100' : isWeekend ? 'bg-orange-100' : 'bg-gray-50'
                     }`}
+                    title={isHolidayDate ? holiday.name : ''}
                   >
                     <div>{dayName}</div>
                     <div className="font-bold">{day}</div>
+                    {isHolidayDate && (
+                      <div className="text-[10px] text-yellow-700 mt-0.5 truncate" title={holiday.name}>
+                        {holiday.name.length > 10 ? holiday.name.substring(0, 10) + '...' : holiday.name}
+                      </div>
+                    )}
                   </th>
                 )
               })}
@@ -588,6 +640,17 @@ export default function MonthlyCalendarView({ isAdmin }) {
                       </div>
                     </td>
                     {monthDates.map(({ day, date }) => {
+                      // Skip processing for empty cells
+                      if (!day || !date) {
+                        return (
+                          <td
+                            key={`empty-${day}-${employeeId}`}
+                            className="border border-gray-300 p-2 text-center text-sm bg-white"
+                          >
+                          </td>
+                        )
+                      }
+                      
                       const status = getAttendanceStatus(employeeId, day)
                       const cellColor = getCellColor(day, status)
                       const isTodayDate = isToday(day)
@@ -596,9 +659,24 @@ export default function MonthlyCalendarView({ isAdmin }) {
                       const isEditing = editingCell?.employeeId === employeeId && editingCell?.day === day
                       const dateStr = getDateString(day)
                       const hasLeave = leaveData[employeeId] && leaveData[employeeId][dateStr]
+                      const holiday = isHoliday(dateStr, true) // Check if it's a holiday
                       
-                      // Only today's date should be editable (not past, not future, is today, no leave, and admin)
-                      const isEditable = isAdmin && isTodayDate && !isPast && !isFuture && !hasLeave
+                      // Only today's date should be editable (not past, not future, is today, no leave, no holiday, and admin)
+                      const isEditable = isAdmin && isTodayDate && !isPast && !isFuture && !hasLeave && !holiday
+                      
+                      // Build tooltip text
+                      let tooltipText = ''
+                      if (holiday) {
+                        tooltipText = holiday.name
+                      } else if (isEditable) {
+                        tooltipText = 'Click to edit status'
+                      } else if (isPast) {
+                        tooltipText = 'Past dates cannot be edited'
+                      } else if (isFuture) {
+                        tooltipText = 'Future dates cannot be edited'
+                      } else if (hasLeave) {
+                        tooltipText = 'Leave dates cannot be edited'
+                      }
                       
                       return (
                         <td
@@ -607,17 +685,7 @@ export default function MonthlyCalendarView({ isAdmin }) {
                             isEditable ? 'cursor-pointer hover:ring-2 hover:ring-blue-400 relative' : ''
                           } ${isPast ? 'opacity-60' : ''} ${isFuture ? 'opacity-40' : ''}`}
                           onClick={() => handleCellClick(employeeId, day)}
-                          title={
-                            isEditable 
-                              ? 'Click to edit status' 
-                              : isPast 
-                                ? 'Past dates cannot be edited' 
-                                : isFuture
-                                  ? 'Future dates cannot be edited'
-                                  : hasLeave
-                                    ? 'Leave dates cannot be edited'
-                                    : ''
-                          }
+                          title={tooltipText}
                         >
                           {isEditing ? (
                             <div className="editing-dropdown absolute z-50 bg-white border-2 border-blue-500 rounded-lg shadow-xl p-2 min-w-[140px]" 
@@ -655,6 +723,11 @@ export default function MonthlyCalendarView({ isAdmin }) {
                           ) : (
                             <>
                               {status || ''}
+                              {holiday && (
+                                <div className="text-[9px] text-yellow-800 mt-0.5 truncate" title={holiday.name}>
+                                  {holiday.name.length > 8 ? holiday.name.substring(0, 8) + '...' : holiday.name}
+                                </div>
+                              )}
                               {isEditable && (
                                 <span className="absolute top-0 right-0 w-2 h-2 bg-blue-500 rounded-full" title="Editable - Click to change status"></span>
                               )}
