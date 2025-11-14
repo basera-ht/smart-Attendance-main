@@ -285,6 +285,52 @@ export default function Analytics() {
           }
           
           console.log('Extracted attendance list:', attendanceList.length, 'records')
+          console.log('Sample record:', attendanceList[0] ? {
+            hasWorkingHours: 'workingHours' in (attendanceList[0] || {}),
+            workingHours: attendanceList[0]?.workingHours,
+            hasCheckIn: !!attendanceList[0]?.checkIn,
+            hasCheckOut: !!attendanceList[0]?.checkOut,
+            checkInTime: attendanceList[0]?.checkIn?.time || attendanceList[0]?.checkIn,
+            checkOutTime: attendanceList[0]?.checkOut?.time || attendanceList[0]?.checkOut
+          } : 'No records')
+
+          // Helper function to calculate working hours from check-in/check-out times
+          const calculateWorkingHours = (record) => {
+            // If workingHours is already set and > 0, use it
+            if (record.workingHours && record.workingHours > 0) {
+              return record.workingHours
+            }
+            
+            // Otherwise, calculate from check-in and check-out times
+            let checkInTime = null
+            let checkOutTime = null
+            
+            // Handle different data structures
+            if (record.checkIn?.time) {
+              checkInTime = new Date(record.checkIn.time)
+            } else if (record.checkIn) {
+              checkInTime = new Date(record.checkIn)
+            } else if (record.checkInTime) {
+              checkInTime = new Date(record.checkInTime)
+            }
+            
+            if (record.checkOut?.time) {
+              checkOutTime = new Date(record.checkOut.time)
+            } else if (record.checkOut) {
+              checkOutTime = new Date(record.checkOut)
+            } else if (record.checkOutTime) {
+              checkOutTime = new Date(record.checkOutTime)
+            }
+            
+            // Calculate difference in minutes if both times exist
+            if (checkInTime && checkOutTime && !isNaN(checkInTime.getTime()) && !isNaN(checkOutTime.getTime())) {
+              const diffInMs = checkOutTime - checkInTime
+              const diffInMinutes = Math.floor(diffInMs / (1000 * 60))
+              return Math.max(0, diffInMinutes)
+            }
+            
+            return 0
+          }
 
           // Calculate statistics
           const totalDays = attendanceList.length
@@ -294,8 +340,22 @@ export default function Analytics() {
           const halfDay = attendanceList.filter(a => a.status === 'half-day').length
           const leave = attendanceList.filter(a => a.status === 'leave').length
           
-          const totalWorkingHours = attendanceList.reduce((sum, a) => sum + (a.workingHours || 0), 0)
-          const totalOvertime = attendanceList.reduce((sum, a) => sum + (a.overtime || 0), 0)
+          // Calculate working hours with fallback calculation
+          const totalWorkingHours = attendanceList.reduce((sum, a) => {
+            const hours = calculateWorkingHours(a)
+            return sum + hours
+          }, 0)
+          
+          const totalOvertime = attendanceList.reduce((sum, a) => {
+            // Use stored overtime or calculate (assuming 8 hours = 480 minutes is standard)
+            if (a.overtime && a.overtime > 0) {
+              return sum + a.overtime
+            }
+            const workingHours = calculateWorkingHours(a)
+            const standardHours = 480 // 8 hours in minutes
+            return sum + Math.max(0, workingHours - standardHours)
+          }, 0)
+          
           const avgWorkingHours = totalDays > 0 ? totalWorkingHours / totalDays : 0
 
           // Calculate attendance rate
