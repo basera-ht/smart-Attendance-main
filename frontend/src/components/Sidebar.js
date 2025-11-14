@@ -10,7 +10,8 @@ import {
   User,
   Download,
   Search,
-  Calendar
+  Calendar,
+  CalendarDays
 } from 'lucide-react'
 
 const Sidebar = () => {
@@ -46,6 +47,12 @@ const Sidebar = () => {
       name: 'Leaves',
       href: '/dashboard/leaves',
       icon: Calendar,
+      roles: ['admin', 'hr', 'employee']
+    },
+    {
+      name: 'Holidays',
+      href: '/dashboard/holidays',
+      icon: CalendarDays,
       roles: ['admin', 'hr', 'employee']
     },
     {
