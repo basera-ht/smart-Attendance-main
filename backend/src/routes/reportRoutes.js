@@ -6,6 +6,8 @@ import moment from 'moment';
 
 const router = express.Router();
 
+const DEFAULT_TIMEZONE = process.env.DEFAULT_TIMEZONE || 'Asia/Kolkata';
+
 // @route   GET /api/reports/dashboard
 // @desc    Get dashboard statistics
 // @access  Private (Admin/HR only)
@@ -55,13 +57,25 @@ router.get('/dashboard', authenticate, authorize('admin', 'hr'), async (req, res
       {
         $addFields: {
           hasCheckIn: { $ne: ['$checkIn.time', null] },
+          checkInLocalParts: {
+            $cond: [
+              { $ne: ['$checkIn.time', null] },
+              {
+                $dateToParts: {
+                  date: '$checkIn.time',
+                  timezone: DEFAULT_TIMEZONE
+                }
+              },
+              null
+            ]
+          },
           checkInMinutes: {
             $cond: [
               { $ne: ['$checkIn.time', null] },
               {
                 $add: [
-                  { $multiply: [{ $hour: '$checkIn.time' }, 60] },
-                  { $minute: '$checkIn.time' }
+                  { $multiply: [{ $ifNull: ['$checkInLocalParts.hour', 0] }, 60] },
+                  { $ifNull: ['$checkInLocalParts.minute', 0] }
                 ]
               },
               null
@@ -72,7 +86,7 @@ router.get('/dashboard', authenticate, authorize('admin', 'hr'), async (req, res
       {
         $group: {
           _id: {
-            $dateToString: { format: '%Y-%m-%d', date: '$date' }
+            $dateToString: { format: '%Y-%m-%d', date: '$date', timezone: DEFAULT_TIMEZONE }
           },
           present: {
             $sum: {
