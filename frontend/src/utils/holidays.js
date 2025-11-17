@@ -150,3 +150,48 @@ export const getHolidaysForMonth = (year, month, includeOptional = true) => {
   })
 }
 
+/**
+ * Check if a given date is a fixed holiday
+ * @param {Date|string|null} date - Date object or YYYY-MM-DD string or null
+ * @returns {Object|null} Fixed holiday object if found, null otherwise
+ */
+export const isFixedHoliday = (date) => {
+  // Handle null or undefined dates
+  if (!date || date === null) {
+    return null
+  }
+  
+  let dateStr
+  
+  if (typeof date === 'string') {
+    // Handle empty strings
+    if (!date || date.trim() === '') {
+      return null
+    }
+    // Assume YYYY-MM-DD format
+    dateStr = date
+  } else {
+    dateStr = formatDateForComparison(date)
+    // If formatDateForComparison returns null, the date is invalid
+    if (!dateStr) {
+      return null
+    }
+  }
+  
+  for (const holiday of fixedHolidays) {
+    const holidayDate = parseHolidayDate(holiday.date)
+    const holidayDateStr = formatDateForComparison(holidayDate)
+    
+    // Skip if holiday date is invalid
+    if (!holidayDateStr) {
+      continue
+    }
+    
+    if (holidayDateStr === dateStr) {
+      return holiday
+    }
+  }
+  
+  return null
+}
+

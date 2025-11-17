@@ -1,8 +1,8 @@
 'use client'
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { attendanceAPI, employeesAPI, leavesAPI } from '../services/api'
 import { useAuth } from '../hooks/useAuth'
-import { isHoliday, formatDateForComparison } from '../utils/holidays'
+import { isHoliday, isFixedHoliday, formatDateForComparison } from '../utils/holidays'
 
 export default function MonthlyCalendarView({ isAdmin }) {
   const { user } = useAuth()
@@ -15,25 +15,43 @@ export default function MonthlyCalendarView({ isAdmin }) {
   const [actionLoading, setActionLoading] = useState({})
   const [todayAttendance, setTodayAttendance] = useState({})
   const [editingCell, setEditingCell] = useState(null) // { employeeId, day }
+  const dropdownRef = useRef(null)
+  const isUpdatingRef = useRef(false)
 
   useEffect(() => {
     if (user || isAdmin) {
       fetchData()
     }
   }, [selectedMonth, isAdmin, user])
-
+  
   // Close editing dropdown when clicking outside
   useEffect(() => {
     const handleClickOutside = (event) => {
-      if (editingCell && !event.target.closest('.editing-dropdown')) {
-        setEditingCell(null)
+      // Don't close if we're updating or if clicking inside the dropdown
+      if (isUpdatingRef.current) {
+        return
+      }
+      
+      if (editingCell && dropdownRef.current) {
+        // Check if click is outside the dropdown
+        if (!dropdownRef.current.contains(event.target)) {
+          // Also check if it's not a button click
+          if (!event.target.closest('button')) {
+            setEditingCell(null)
+          }
+        }
       }
     }
 
     if (editingCell) {
-      document.addEventListener('mousedown', handleClickOutside)
+      // Use click instead of mousedown for better compatibility
+      const timeoutId = setTimeout(() => {
+        document.addEventListener('click', handleClickOutside, true)
+      }, 300)
+      
       return () => {
-        document.removeEventListener('mousedown', handleClickOutside)
+        clearTimeout(timeoutId)
+        document.removeEventListener('click', handleClickOutside, true)
       }
     }
   }, [editingCell])
@@ -363,11 +381,16 @@ export default function MonthlyCalendarView({ isAdmin }) {
     return cellDateStr > todayStr
   }
 
-  const handleCellClick = (employeeId, day) => {
+  const handleCellClick = (employeeId, day, event) => {
     if (!isAdmin) return
     if (!day) return
     if (isPastDate(day)) return // Don't allow editing past dates
     if (!isToday(day)) return // Only allow editing today's date
+    
+    // Don't open if clicking on the dropdown
+    if (event && event.target.closest('.editing-dropdown')) {
+      return
+    }
     
     const dateStr = getDateString(day)
     
@@ -385,7 +408,16 @@ export default function MonthlyCalendarView({ isAdmin }) {
       return
     }
 
-    setEditingCell({ employeeId, day })
+    // Close any existing editing cell first
+    if (editingCell) {
+      setEditingCell(null)
+      // Use setTimeout to ensure the previous dropdown closes before opening a new one
+      setTimeout(() => {
+        setEditingCell({ employeeId, day })
+      }, 50)
+    } else {
+      setEditingCell({ employeeId, day })
+    }
   }
 
   const handleUpdateStatus = async (employeeId, day, status) => {
@@ -427,10 +459,16 @@ export default function MonthlyCalendarView({ isAdmin }) {
     const dayOfWeek = date.getDay()
     const dateStr = getDateString(day)
     
-    // Check if it's a holiday (holidays override weekend colors)
+    // Check if it's a fixed holiday first (fixed holidays override everything)
+    const fixedHoliday = isFixedHoliday(dateStr)
+    if (fixedHoliday) {
+      return 'bg-blue-100' // Fixed holiday - blue background
+    }
+    
+    // Check if it's an optional holiday (optional holidays override weekend colors)
     const holiday = isHoliday(dateStr, true) // Include optional holidays
     if (holiday) {
-      return 'bg-yellow-100' // Holiday - yellow background
+      return 'bg-yellow-100' // Optional holiday - yellow background
     }
     
     // Weekend (Saturday = 6, Sunday = 0)
@@ -528,7 +566,7 @@ export default function MonthlyCalendarView({ isAdmin }) {
         <table className="w-full border-collapse border border-gray-300">
           <thead>
             <tr>
-              <th className="border border-gray-300 bg-gray-50 p-2 text-left font-semibold text-sm sticky left-0 z-10 bg-gray-50">
+              <th className="border border-gray-300 bg-gray-50 p-2 text-left font-semibold text-sm sticky left-0 z-10">
                 Employee
               </th>
               {monthDates.map(({ day, dayName, date }, index) => {
@@ -544,20 +582,22 @@ export default function MonthlyCalendarView({ isAdmin }) {
                 const dayOfWeek = date.getDay()
                 const isWeekend = dayOfWeek === 0 || dayOfWeek === 6
                 const dateStr = formatDateForComparison(date)
+                const fixedHoliday = isFixedHoliday(dateStr)
                 const holiday = isHoliday(dateStr, true) // Include optional holidays
                 const isHolidayDate = !!holiday
+                const isFixedHolidayDate = !!fixedHoliday
                 return (
                   <th
                     key={day}
                     className={`border border-gray-300 p-2 text-center text-xs font-semibold ${
-                      isHolidayDate ? 'bg-yellow-100' : isWeekend ? 'bg-orange-100' : 'bg-gray-50'
+                      isFixedHolidayDate ? 'bg-blue-100' : isHolidayDate ? 'bg-yellow-100' : isWeekend ? 'bg-orange-100' : 'bg-gray-50'
                     }`}
                     title={isHolidayDate ? holiday.name : ''}
                   >
                     <div>{dayName}</div>
                     <div className="font-bold">{day}</div>
                     {isHolidayDate && (
-                      <div className="text-[10px] text-yellow-700 mt-0.5 truncate" title={holiday.name}>
+                      <div className={`text-[10px] mt-0.5 truncate ${isFixedHolidayDate ? 'text-blue-700' : 'text-yellow-700'}`} title={holiday.name}>
                         {holiday.name.length > 10 ? holiday.name.substring(0, 10) + '...' : holiday.name}
                       </div>
                     )}
@@ -660,6 +700,7 @@ export default function MonthlyCalendarView({ isAdmin }) {
                       const dateStr = getDateString(day)
                       const hasLeave = leaveData[employeeId] && leaveData[employeeId][dateStr]
                       const holiday = isHoliday(dateStr, true) // Check if it's a holiday
+                      const fixedHoliday = isFixedHoliday(dateStr) // Check if it's a fixed holiday
                       
                       // Only today's date should be editable (not past, not future, is today, no leave, no holiday, and admin)
                       const isEditable = isAdmin && isTodayDate && !isPast && !isFuture && !hasLeave && !holiday
@@ -684,7 +725,19 @@ export default function MonthlyCalendarView({ isAdmin }) {
                           className={`border border-gray-300 p-2 text-center text-sm font-semibold ${cellColor} ${
                             isEditable ? 'cursor-pointer hover:ring-2 hover:ring-blue-400 relative' : ''
                           } ${isPast ? 'opacity-60' : ''} ${isFuture ? 'opacity-40' : ''}`}
-                          onClick={() => handleCellClick(employeeId, day)}
+                          onClick={(e) => {
+                            // Don't open if clicking on dropdown
+                            if (!e.target.closest('.editing-dropdown') && !isUpdatingRef.current) {
+                              handleCellClick(employeeId, day, e)
+                            }
+                          }}
+                          onMouseDown={(e) => {
+                            // Prevent opening dropdown if clicking on existing dropdown
+                            if (e.target.closest('.editing-dropdown')) {
+                              e.stopPropagation()
+                              e.preventDefault()
+                            }
+                          }}
                           title={tooltipText}
                         >
                           {isEditing ? (
@@ -724,7 +777,7 @@ export default function MonthlyCalendarView({ isAdmin }) {
                             <>
                               {status || ''}
                               {holiday && (
-                                <div className="text-[9px] text-yellow-800 mt-0.5 truncate" title={holiday.name}>
+                                <div className={`text-[9px] mt-0.5 truncate ${fixedHoliday ? 'text-blue-700' : 'text-yellow-800'}`} title={holiday.name}>
                                   {holiday.name.length > 8 ? holiday.name.substring(0, 8) + '...' : holiday.name}
                                 </div>
                               )}
