@@ -21,6 +21,7 @@ export default function Analytics() {
   const [employeeAnalytics, setEmployeeAnalytics] = useState({})
   const [employeeChartData, setEmployeeChartData] = useState([])
   const [employeeLoading, setEmployeeLoading] = useState(false)
+  const [employeeSearchTerm, setEmployeeSearchTerm] = useState('')
 
   useEffect(() => {
     const fetchAnalytics = async () => {
@@ -730,19 +731,47 @@ export default function Analytics() {
                 <label className="block text-sm font-medium text-gray-700 mb-2">
                   Select Employee
                 </label>
-                <select
-                  value={selectedEmployee || ''}
-                  onChange={(e) => setSelectedEmployee(e.target.value)}
-                  className="w-full md:w-64 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  disabled={employeeLoading}
-                >
-                  <option value="">Select an employee...</option>
-                  {employees.map((emp) => (
-                    <option key={emp._id} value={emp._id}>
-                      {emp.name} {emp.employeeId ? `(${emp.employeeId})` : ''}
-                    </option>
-                  ))}
-                </select>
+                <div className="space-y-2">
+                  <div className="relative">
+                    <input
+                      type="text"
+                      placeholder="Search employee by name or ID..."
+                      value={employeeSearchTerm}
+                      onChange={(e) => setEmployeeSearchTerm(e.target.value)}
+                      className="w-full md:w-64 px-4 py-2 pl-10 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    />
+                    <svg
+                      className="absolute left-3 top-2.5 h-5 w-5 text-gray-400"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                    </svg>
+                  </div>
+                  <select
+                    value={selectedEmployee || ''}
+                    onChange={(e) => setSelectedEmployee(e.target.value)}
+                    className="w-full md:w-64 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    disabled={employeeLoading}
+                  >
+                    <option value="">Select an employee...</option>
+                    {employees
+                      .filter((emp) => {
+                        if (!employeeSearchTerm) return true
+                        const searchLower = employeeSearchTerm.toLowerCase()
+                        return (
+                          emp.name?.toLowerCase().includes(searchLower) ||
+                          emp.employeeId?.toLowerCase().includes(searchLower)
+                        )
+                      })
+                      .map((emp) => (
+                        <option key={emp._id} value={emp._id}>
+                          {emp.name} {emp.employeeId ? `(${emp.employeeId})` : ''}
+                        </option>
+                      ))}
+                  </select>
+                </div>
               </div>
 
               {employeeLoading ? (

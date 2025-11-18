@@ -27,9 +27,9 @@ router.get('/dashboard', authenticate, authorize('admin', 'hr'), async (req, res
       'checkIn.time': { $exists: true }
     });
 
-    // Late today (check-in after 9:30 AM)
+    // Late today (check-in after 11:30 AM)
     const lateThreshold = new Date(today);
-    lateThreshold.setHours(9, 30, 0, 0);
+    lateThreshold.setHours(11, 30, 0, 0);
     
     const lateToday = await Attendance.countDocuments({
       date: { $gte: today, $lt: tomorrow },
@@ -99,7 +99,7 @@ router.get('/dashboard', authenticate, authorize('admin', 'hr'), async (req, res
                 {
                   $and: [
                     '$hasCheckIn',
-                    { $gt: ['$checkInMinutes', 570] } // 9:30 AM = 570 minutes
+                    { $gt: ['$checkInMinutes', 690] } // 11:30 AM = 690 minutes
                   ]
                 },
                 1,
@@ -272,9 +272,9 @@ router.get('/attendance', authenticate, authorize('admin', 'hr'), async (req, re
       // For daily, show detailed hourly breakdown with better insights
       const hourlyData = {};
       const timeSlots = {
-        early: { start: 0, end: 540 }, // Before 9:00 AM (540 minutes)
-        onTime: { start: 540, end: 570 }, // 9:00 AM to 9:30 AM (570 minutes = 9:30 AM)
-        late: { start: 570, end: 720 }, // After 9:30 AM
+        early: { start: 0, end: 600 }, // Before 10:00 AM (600 minutes)
+        onTime: { start: 600, end: 660 }, // 10:00 AM to 11:00 AM (600-660 minutes)
+        late: { start: 690, end: 720 }, // After 11:30 AM (690+ minutes)
         veryLate: { start: 720, end: 1440 } // After 12:00 PM
       };
       
@@ -391,7 +391,7 @@ router.get('/attendance', authenticate, authorize('admin', 'hr'), async (req, re
                   {
                     $and: [
                       '$hasCheckIn',
-                      { $gt: ['$checkInMinutes', 570] } // 9:30 AM = 570 minutes
+                      { $gt: ['$checkInMinutes', 690] } // 11:30 AM = 690 minutes
                     ]
                   },
                   1,
@@ -485,7 +485,7 @@ router.get('/attendance', authenticate, authorize('admin', 'hr'), async (req, re
                   {
                     $and: [
                       { $ne: ['$checkIn.time', null] },
-                      { $gt: ['$checkInMinutes', 570] } // 9:30 AM = 570 minutes
+                      { $gt: ['$checkInMinutes', 690] } // 11:30 AM = 690 minutes
                     ]
                   },
                   1,

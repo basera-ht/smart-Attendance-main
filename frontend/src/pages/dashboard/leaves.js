@@ -27,6 +27,7 @@ export default function LeavesPage() {
   const [leaveBalance, setLeaveBalance] = useState(null)
   const [selectedEmployeeId, setSelectedEmployeeId] = useState('')
   const [employees, setEmployees] = useState([])
+  const [employeeSearchTerm, setEmployeeSearchTerm] = useState('')
 
   const isEmployee = hasRole('employee')
   const isAdmin = hasRole('admin') || hasRole('hr')
@@ -552,21 +553,49 @@ export default function LeavesPage() {
                 <label className="block text-sm font-medium text-gray-700 mb-2">
                   Select Employee
                 </label>
-                <select
-                  value={selectedEmployeeId}
-                  onChange={(e) => {
-                    setSelectedEmployeeId(e.target.value)
-                    calculateLeaveBalance(e.target.value)
-                  }}
-                  className="w-full md:w-1/3 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                >
-                  <option value="">Select an employee</option>
-                  {employees.map((emp) => (
-                    <option key={emp._id} value={emp._id}>
-                      {emp.name} ({emp.employeeId || 'N/A'})
-                    </option>
-                  ))}
-                </select>
+                <div className="space-y-2">
+                  <div className="relative">
+                    <input
+                      type="text"
+                      placeholder="Search employee by name or ID..."
+                      value={employeeSearchTerm}
+                      onChange={(e) => setEmployeeSearchTerm(e.target.value)}
+                      className="w-full md:w-1/3 px-3 py-2 pl-10 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    />
+                    <svg
+                      className="absolute left-3 top-2.5 h-5 w-5 text-gray-400"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                    </svg>
+                  </div>
+                  <select
+                    value={selectedEmployeeId}
+                    onChange={(e) => {
+                      setSelectedEmployeeId(e.target.value)
+                      calculateLeaveBalance(e.target.value)
+                    }}
+                    className="w-full md:w-1/3 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                  >
+                    <option value="">Select an employee</option>
+                    {employees
+                      .filter((emp) => {
+                        if (!employeeSearchTerm) return true
+                        const searchLower = employeeSearchTerm.toLowerCase()
+                        return (
+                          emp.name?.toLowerCase().includes(searchLower) ||
+                          emp.employeeId?.toLowerCase().includes(searchLower)
+                        )
+                      })
+                      .map((emp) => (
+                        <option key={emp._id} value={emp._id}>
+                          {emp.name} ({emp.employeeId || 'N/A'})
+                        </option>
+                      ))}
+                  </select>
+                </div>
                 {selectedEmployeeId && (
                   <p className="mt-2 text-sm text-gray-600">
                     Viewing leave balance for: <span className="font-semibold">
