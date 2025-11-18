@@ -53,7 +53,11 @@ const leaveSchema = new mongoose.Schema({
   },
   attachments: [{
     type: String // URLs to attached files
-  }]
+  }],
+  isPaid: {
+    type: Boolean,
+    default: true // Default to paid leave
+  }
 }, {
   timestamps: true
 });

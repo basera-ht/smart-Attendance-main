@@ -107,11 +107,22 @@ export default function MonthlyCalendarView({ isAdmin }) {
             const dateStr = formatDateForComparison(currentDate)
             if (!dateStr) break // Skip if date is invalid
             
-            // Map leave types to abbreviations
+            // Map leave types to abbreviations based on isPaid status
             let leaveCode = 'UL' // Default to Unpaid Leave
-            if (leave.leaveType === 'vacation') leaveCode = 'PL' // Paid Leave
-            if (leave.leaveType === 'sick') leaveCode = 'ML' // Medical Leave
-            if (leave.leaveType === 'emergency') leaveCode = 'E' // Emergency
+            
+            // Check if leave is unpaid
+            if (leave.isPaid === false) {
+              leaveCode = 'UL' // Unpaid Leave
+            } else {
+              // For paid leaves, use appropriate codes based on leave type
+              if (leave.leaveType === 'vacation') leaveCode = 'PL' // Paid Leave
+              else if (leave.leaveType === 'sick') leaveCode = 'ML' // Medical Leave
+              else if (leave.leaveType === 'emergency') leaveCode = 'E' // Emergency
+              else if (leave.leaveType === 'maternity') leaveCode = 'ML' // Maternity Leave
+              else if (leave.leaveType === 'paternity') leaveCode = 'PL' // Paternity Leave
+              else if (leave.leaveType === 'bereavement') leaveCode = 'BL' // Bereavement Leave
+              else leaveCode = 'PL' // Default to Paid Leave for other types
+            }
             
             organized[empId][dateStr] = leaveCode
             currentDate.setDate(currentDate.getDate() + 1)

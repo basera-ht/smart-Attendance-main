@@ -116,7 +116,7 @@ router.post('/', authenticate, [
       });
     }
 
-    const { leaveType, startDate, endDate, reason, attachments } = req.body;
+    const { leaveType, startDate, endDate, reason, attachments, isPaid } = req.body;
 
     // Log incoming data for debugging
     console.log('Received leave request data:', { leaveType, startDate, endDate, reasonLength: reason?.length });
@@ -204,7 +204,8 @@ router.post('/', authenticate, [
       startDate: start,
       endDate: end,
       reason: trimmedReason,
-      attachments: attachments || []
+      attachments: attachments || [],
+      isPaid: isPaid !== undefined ? isPaid : true // Default to paid leave if not specified
     };
 
     try {
@@ -293,7 +294,7 @@ router.put('/:id', authenticate, [
       });
     }
 
-    const { leaveType, startDate, endDate, reason, status, reviewComments, attachments } = req.body;
+    const { leaveType, startDate, endDate, reason, status, reviewComments, attachments, isPaid } = req.body;
 
     // Employees can only update pending leaves
     if (isEmployee) {
@@ -318,6 +319,7 @@ router.put('/:id', authenticate, [
       if (endDate) leave.endDate = new Date(endDate);
       if (reason) leave.reason = reason;
       if (attachments) leave.attachments = attachments;
+      if (isPaid !== undefined) leave.isPaid = isPaid;
       if (status === 'cancelled') leave.status = 'cancelled';
     }
 
@@ -334,6 +336,7 @@ router.put('/:id', authenticate, [
       if (startDate) leave.startDate = new Date(startDate);
       if (endDate) leave.endDate = new Date(endDate);
       if (reason) leave.reason = reason;
+      if (isPaid !== undefined) leave.isPaid = isPaid;
     }
 
     // Recalculate total days if dates changed
