@@ -4,6 +4,7 @@ import DashboardLayout from '../../components/DashboardLayout'
 import { useAuth } from '../../hooks/useAuth'
 import { leavesAPI } from '../../services/api'
 import { Calendar, Plus, Edit, Trash2, CheckCircle, X, Clock, FileText } from 'lucide-react'
+import { employeesAPI } from '../../services/api'
 
 export default function LeavesPage() {
   const { user, hasRole } = useAuth()
@@ -21,6 +22,11 @@ export default function LeavesPage() {
   })
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
+  const [paidLeavesCount, setPaidLeavesCount] = useState(0)
+  const [activeTab, setActiveTab] = useState('requests') // 'requests' or 'balance'
+  const [leaveBalance, setLeaveBalance] = useState(null)
+  const [selectedEmployeeId, setSelectedEmployeeId] = useState('')
+  const [employees, setEmployees] = useState([])
 
   const isEmployee = hasRole('employee')
   const isAdmin = hasRole('admin') || hasRole('hr')
@@ -29,8 +35,150 @@ export default function LeavesPage() {
     fetchLeaves()
     if (isEmployee) {
       fetchStats()
+      calculateLeaveBalance()
+    }
+    if (isAdmin) {
+      fetchEmployees()
     }
   }, [])
+
+  // Fetch employees for admin
+  const fetchEmployees = async () => {
+    try {
+      const response = await employeesAPI.getEmployees()
+      if (response?.data?.success) {
+        const employeesData = response.data.data?.docs || response.data.data || []
+        setEmployees(employeesData)
+        // Set first employee as default if available
+        if (employeesData.length > 0 && !selectedEmployeeId) {
+          const firstEmployeeId = employeesData[0]._id
+          setSelectedEmployeeId(firstEmployeeId)
+          // Calculate balance for the default employee if on balance tab
+          if (activeTab === 'balance') {
+            calculateLeaveBalance(firstEmployeeId)
+          }
+        }
+      }
+    } catch (err) {
+      console.error('Error fetching employees:', err)
+    }
+  }
+
+  // Update leave balance when selected employee changes (for admin)
+  useEffect(() => {
+    if (isAdmin && selectedEmployeeId && activeTab === 'balance') {
+      calculateLeaveBalance(selectedEmployeeId)
+    }
+  }, [selectedEmployeeId, activeTab])
+
+  // Calculate leave balance
+  const calculateLeaveBalance = async (employeeId = null) => {
+    // For employees, use their own ID. For admins, use the selected employee ID
+    const targetEmployeeId = employeeId || (isEmployee ? user?._id || user?.id : selectedEmployeeId)
+    
+    if (!targetEmployeeId) return
+    
+    try {
+      const currentYear = new Date().getFullYear()
+      const yearStart = new Date(currentYear, 0, 1)
+      const yearEnd = new Date(currentYear, 11, 31, 23, 59, 59, 999)
+      
+      // Get all approved leaves for the current year for the target employee
+      const response = await leavesAPI.getLeaves({
+        status: 'approved',
+        startDate: yearStart.toISOString(),
+        endDate: yearEnd.toISOString(),
+        employeeId: targetEmployeeId
+      })
+      
+      if (response?.data?.success) {
+        const leavesData = response.data.data?.docs || response.data.data || []
+        
+        // Constants
+        const PAID_LEAVE_YEARLY = 24 // 24 days per year
+        const PAID_LEAVE_MONTHLY = 2 // 2 days per month
+        const MEDICAL_LEAVE_YEARLY = 12 // 12 days per year
+        
+        // Calculate paid leave taken
+        let paidLeaveTaken = 0
+        const monthlyPaidLeaves = {}
+        
+        // Calculate medical leave taken
+        let medicalLeaveTaken = 0
+        
+        leavesData.forEach(leave => {
+          const leaveStart = new Date(leave.startDate)
+          const leaveEnd = new Date(leave.endDate)
+          const days = leave.totalDays || 0
+          
+          // Count paid leaves
+          if (leave.isPaid !== false) {
+            paidLeaveTaken += days
+            
+            // Track monthly paid leaves - count leave records per month, not days
+            // A leave counts for a month if it overlaps with that month
+            const currentDate = new Date(leaveStart)
+            const processedMonths = new Set()
+            
+            while (currentDate <= leaveEnd) {
+              const monthKey = `${currentDate.getFullYear()}-${currentDate.getMonth()}`
+              if (!processedMonths.has(monthKey)) {
+                processedMonths.add(monthKey)
+                if (!monthlyPaidLeaves[monthKey]) {
+                  monthlyPaidLeaves[monthKey] = 0
+                }
+                monthlyPaidLeaves[monthKey] += 1 // Count as 1 leave record per month
+              }
+              currentDate.setDate(currentDate.getDate() + 1)
+            }
+          }
+          
+          // Count medical leaves (sick leave type)
+          if (leave.leaveType === 'sick') {
+            medicalLeaveTaken += days
+          }
+        })
+        
+        // Calculate remaining leaves
+        const paidLeaveRemaining = Math.max(0, PAID_LEAVE_YEARLY - paidLeaveTaken)
+        const medicalLeaveRemaining = Math.max(0, MEDICAL_LEAVE_YEARLY - medicalLeaveTaken)
+        
+        // Calculate monthly paid leave usage
+        const currentMonth = new Date().getMonth()
+        const currentYearNum = new Date().getFullYear()
+        const monthlyUsage = []
+        
+        for (let month = 0; month <= currentMonth; month++) {
+          const monthKey = `${currentYearNum}-${month}`
+          const used = monthlyPaidLeaves[monthKey] || 0
+          const remaining = Math.max(0, PAID_LEAVE_MONTHLY - used)
+          monthlyUsage.push({
+            month,
+            monthName: new Date(currentYearNum, month, 1).toLocaleDateString('en-US', { month: 'long' }),
+            used,
+            remaining,
+            limit: PAID_LEAVE_MONTHLY
+          })
+        }
+        
+        setLeaveBalance({
+          paidLeave: {
+            total: PAID_LEAVE_YEARLY,
+            taken: paidLeaveTaken,
+            remaining: paidLeaveRemaining
+          },
+          medicalLeave: {
+            total: MEDICAL_LEAVE_YEARLY,
+            taken: medicalLeaveTaken,
+            remaining: medicalLeaveRemaining
+          },
+          monthlyPaidLeaves: monthlyUsage
+        })
+      }
+    } catch (err) {
+      console.error('Error calculating leave balance:', err)
+    }
+  }
 
   const fetchLeaves = async () => {
     try {
@@ -56,6 +204,45 @@ export default function LeavesPage() {
       }
     } catch (err) {
       console.error('Error fetching stats:', err)
+    }
+  }
+
+  // Check paid leave count for the selected month
+  const checkPaidLeaveCount = async (startDate) => {
+    if (!startDate || !isEmployee) return
+    
+    try {
+      const date = new Date(startDate)
+      const month = date.getMonth()
+      const year = date.getFullYear()
+      
+      // Get all leaves for the month
+      const response = await leavesAPI.getLeaves({
+        startDate: new Date(year, month, 1).toISOString(),
+        endDate: new Date(year, month + 1, 0).toISOString()
+      })
+      
+      if (response?.data?.success) {
+        const leavesData = response.data.data?.docs || response.data.data || []
+        // Count paid leaves (approved or pending) in this month
+        const paidCount = leavesData.filter(leave => {
+          const leaveStart = new Date(leave.startDate)
+          const leaveEnd = new Date(leave.endDate)
+          const monthStart = new Date(year, month, 1)
+          const monthEnd = new Date(year, month + 1, 0, 23, 59, 59, 999)
+          
+          // Check if leave overlaps with the month
+          const overlaps = leaveStart <= monthEnd && leaveEnd >= monthStart
+          return overlaps && 
+                 leave.isPaid !== false && 
+                 (leave.status === 'approved' || leave.status === 'pending') &&
+                 (!editingLeave || leave._id !== editingLeave._id) // Exclude current leave if editing
+        }).length
+        
+        setPaidLeavesCount(paidCount)
+      }
+    } catch (err) {
+      console.error('Error checking paid leave count:', err)
     }
   }
 
@@ -88,7 +275,17 @@ export default function LeavesPage() {
         const response = await leavesAPI.updateLeave(editingLeave._id, submitData)
         if (response?.data?.success) {
           await fetchLeaves()
+          if (isEmployee) {
+            await fetchStats()
+            await calculateLeaveBalance()
+          }
           resetForm()
+          // Show warning if leave was auto-set to unpaid
+          if (response?.data?.warning) {
+            alert(response.data.warning)
+          } else {
+            alert('Leave request updated successfully!')
+          }
         } else {
           setError(response?.data?.message || 'Failed to update leave request')
         }
@@ -96,8 +293,17 @@ export default function LeavesPage() {
         const response = await leavesAPI.createLeave(submitData)
         if (response?.data?.success) {
           await fetchLeaves()
-          if (isEmployee) await fetchStats()
+          if (isEmployee) {
+            await fetchStats()
+            await calculateLeaveBalance()
+          }
           resetForm()
+          // Show warning if leave was auto-set to unpaid
+          if (response?.data?.warning) {
+            alert(response.data.warning)
+          } else {
+            alert('Leave request submitted successfully!')
+          }
         } else {
           setError(response?.data?.message || 'Failed to create leave request')
         }
@@ -135,14 +341,19 @@ export default function LeavesPage() {
 
   const handleEdit = (leave) => {
     setEditingLeave(leave)
+    const startDateStr = leave.startDate.split('T')[0]
     setFormData({
       leaveType: leave.leaveType,
-      startDate: leave.startDate.split('T')[0],
+      startDate: startDateStr,
       endDate: leave.endDate.split('T')[0],
       reason: leave.reason,
       isPaid: leave.isPaid !== undefined ? leave.isPaid : true
     })
     setShowForm(true)
+    // Check paid leave count when editing
+    if (isEmployee) {
+      checkPaidLeaveCount(startDateStr)
+    }
   }
 
   const handleDelete = async (id) => {
@@ -152,7 +363,10 @@ export default function LeavesPage() {
       const response = await leavesAPI.deleteLeave(id)
       if (response?.data?.success) {
         await fetchLeaves()
-        if (isEmployee) await fetchStats()
+        if (isEmployee) {
+          await fetchStats()
+          await calculateLeaveBalance()
+        }
       } else {
         setError(response?.data?.message || 'Failed to delete leave request')
       }
@@ -170,6 +384,13 @@ export default function LeavesPage() {
       })
       if (response?.data?.success) {
         await fetchLeaves()
+        if (isEmployee) {
+          await calculateLeaveBalance()
+        }
+        // If admin is viewing balance tab, refresh the balance for selected employee
+        if (isAdmin && activeTab === 'balance' && selectedEmployeeId) {
+          await calculateLeaveBalance(selectedEmployeeId)
+        }
       } else {
         setError(response?.data?.message || 'Failed to update leave request')
       }
@@ -285,7 +506,206 @@ export default function LeavesPage() {
           </div>
         )}
 
-        {/* Leave Request Form */}
+        {/* Tabs */}
+        {(isEmployee || isAdmin) && (
+          <div className="bg-white shadow rounded-lg">
+            <div className="border-b border-gray-200">
+              <nav className="flex -mb-px">
+                <button
+                  onClick={() => setActiveTab('requests')}
+                  className={`py-4 px-6 text-sm font-medium border-b-2 transition-colors ${
+                    activeTab === 'requests'
+                      ? 'border-blue-500 text-blue-600'
+                      : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                  }`}
+                >
+                  Leave Requests
+                </button>
+                <button
+                  onClick={() => {
+                    setActiveTab('balance')
+                    if (isAdmin && selectedEmployeeId) {
+                      calculateLeaveBalance(selectedEmployeeId)
+                    } else if (isEmployee) {
+                      calculateLeaveBalance()
+                    }
+                  }}
+                  className={`py-4 px-6 text-sm font-medium border-b-2 transition-colors ${
+                    activeTab === 'balance'
+                      ? 'border-blue-500 text-blue-600'
+                      : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                  }`}
+                >
+                  Leave Balance
+                </button>
+              </nav>
+            </div>
+          </div>
+        )}
+
+        {/* Tab Content */}
+        {activeTab === 'balance' && (isEmployee || isAdmin) ? (
+          <div className="space-y-6">
+            {/* Employee Selector for Admin */}
+            {isAdmin && (
+              <div className="bg-white p-4 rounded-lg shadow">
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Select Employee
+                </label>
+                <select
+                  value={selectedEmployeeId}
+                  onChange={(e) => {
+                    setSelectedEmployeeId(e.target.value)
+                    calculateLeaveBalance(e.target.value)
+                  }}
+                  className="w-full md:w-1/3 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="">Select an employee</option>
+                  {employees.map((emp) => (
+                    <option key={emp._id} value={emp._id}>
+                      {emp.name} ({emp.employeeId || 'N/A'})
+                    </option>
+                  ))}
+                </select>
+                {selectedEmployeeId && (
+                  <p className="mt-2 text-sm text-gray-600">
+                    Viewing leave balance for: <span className="font-semibold">
+                      {employees.find(emp => emp._id === selectedEmployeeId)?.name || 'Selected Employee'}
+                    </span>
+                  </p>
+                )}
+              </div>
+            )}
+
+            {/* Leave Balance Overview */}
+            {leaveBalance && (isEmployee || (isAdmin && selectedEmployeeId)) ? (
+              <>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  {/* Paid Leave Card */}
+                  <div className="bg-white p-6 rounded-lg shadow">
+                    <div className="flex items-center justify-between mb-4">
+                      <h3 className="text-lg font-semibold text-gray-900">Paid Leave</h3>
+                      <span className="text-xs text-gray-500">24 days/year</span>
+                    </div>
+                    <div className="space-y-4">
+                      <div>
+                        <div className="flex justify-between text-sm mb-2">
+                          <span className="text-gray-600">Total Allocated</span>
+                          <span className="font-medium">{leaveBalance.paidLeave.total} days</span>
+                        </div>
+                        <div className="w-full bg-gray-200 rounded-full h-2">
+                          <div
+                            className="bg-blue-600 h-2 rounded-full transition-all"
+                            style={{ width: `${Math.min((leaveBalance.paidLeave.taken / leaveBalance.paidLeave.total) * 100, 100)}%` }}
+                          ></div>
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-2 gap-4 pt-2">
+                        <div>
+                          <p className="text-sm text-gray-600">Taken</p>
+                          <p className="text-2xl font-bold text-orange-600">{leaveBalance.paidLeave.taken}</p>
+                        </div>
+                        <div>
+                          <p className="text-sm text-gray-600">Remaining</p>
+                          <p className="text-2xl font-bold text-green-600">{leaveBalance.paidLeave.remaining}</p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Medical Leave Card */}
+                  <div className="bg-white p-6 rounded-lg shadow">
+                    <div className="flex items-center justify-between mb-4">
+                      <h3 className="text-lg font-semibold text-gray-900">Medical Leave</h3>
+                      <span className="text-xs text-gray-500">12 days/year</span>
+                    </div>
+                    <div className="space-y-4">
+                      <div>
+                        <div className="flex justify-between text-sm mb-2">
+                          <span className="text-gray-600">Total Allocated</span>
+                          <span className="font-medium">{leaveBalance.medicalLeave.total} days</span>
+                        </div>
+                        <div className="w-full bg-gray-200 rounded-full h-2">
+                          <div
+                            className="bg-red-600 h-2 rounded-full transition-all"
+                            style={{ width: `${Math.min((leaveBalance.medicalLeave.taken / leaveBalance.medicalLeave.total) * 100, 100)}%` }}
+                          ></div>
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-2 gap-4 pt-2">
+                        <div>
+                          <p className="text-sm text-gray-600">Taken</p>
+                          <p className="text-2xl font-bold text-orange-600">{leaveBalance.medicalLeave.taken}</p>
+                        </div>
+                        <div>
+                          <p className="text-sm text-gray-600">Remaining</p>
+                          <p className="text-2xl font-bold text-green-600">{leaveBalance.medicalLeave.remaining}</p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Monthly Paid Leave Breakdown */}
+                <div className="bg-white p-6 rounded-lg shadow">
+                  <h3 className="text-lg font-semibold text-gray-900 mb-4">Monthly Paid Leave Usage (2 days/month)</h3>
+                  <div className="overflow-x-auto">
+                    <table className="min-w-full divide-y divide-gray-200">
+                      <thead className="bg-gray-50">
+                        <tr>
+                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Month</th>
+                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Limit</th>
+                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Used</th>
+                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Remaining</th>
+                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
+                        </tr>
+                      </thead>
+                      <tbody className="bg-white divide-y divide-gray-200">
+                        {leaveBalance.monthlyPaidLeaves.map((monthData) => (
+                          <tr key={monthData.month} className="hover:bg-gray-50">
+                            <td className="px-4 py-3 whitespace-nowrap text-sm font-medium text-gray-900">
+                              {monthData.monthName}
+                            </td>
+                            <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-500">
+                              {monthData.limit} days
+                            </td>
+                            <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-500">
+                              {monthData.used} days
+                            </td>
+                            <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-500">
+                              {monthData.remaining} days
+                            </td>
+                            <td className="px-4 py-3 whitespace-nowrap">
+                              <span className={`px-2 py-1 text-xs font-semibold rounded-full ${
+                                monthData.used >= monthData.limit
+                                  ? 'bg-red-100 text-red-800'
+                                  : monthData.used > 0
+                                  ? 'bg-yellow-100 text-yellow-800'
+                                  : 'bg-green-100 text-green-800'
+                              }`}>
+                                {monthData.used >= monthData.limit ? 'Limit Reached' : monthData.used > 0 ? 'In Use' : 'Available'}
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </>
+            ) : (
+              <div className="bg-white p-6 rounded-lg shadow text-center">
+                <p className="text-gray-500">
+                  {isAdmin && !selectedEmployeeId 
+                    ? 'Please select an employee to view their leave balance'
+                    : 'Loading leave balance...'}
+                </p>
+              </div>
+            )}
+          </div>
+        ) : (
+          <>
+            {/* Leave Request Form */}
         {showForm && (
           <div className="bg-white p-6 rounded-lg shadow">
             <div className="flex justify-between items-center mb-4">
@@ -344,16 +764,22 @@ export default function LeavesPage() {
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
                     Leave Payment Type
+                    {isEmployee && formData.startDate && paidLeavesCount >= 2 && (
+                      <span className="ml-2 text-xs text-orange-600 font-normal">
+                        (You have already used 2 paid leaves this month)
+                      </span>
+                    )}
                   </label>
                   <div className="flex space-x-2">
                     <button
                       type="button"
                       onClick={() => setFormData({ ...formData, isPaid: true })}
+                      disabled={isEmployee && formData.startDate && paidLeavesCount >= 2}
                       className={`flex-1 px-4 py-2 rounded-lg font-medium transition-colors ${
                         formData.isPaid
                           ? 'bg-green-500 text-white hover:bg-green-600'
                           : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                      }`}
+                      } ${isEmployee && formData.startDate && paidLeavesCount >= 2 ? 'opacity-50 cursor-not-allowed' : ''}`}
                     >
                       Paid Leave
                     </button>
@@ -378,7 +804,12 @@ export default function LeavesPage() {
                   <input
                     type="date"
                     value={formData.startDate}
-                    onChange={(e) => setFormData({ ...formData, startDate: e.target.value })}
+                    onChange={(e) => {
+                      setFormData({ ...formData, startDate: e.target.value })
+                      if (isEmployee) {
+                        checkPaidLeaveCount(e.target.value)
+                      }
+                    }}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
                     required
                     min={new Date().toISOString().split('T')[0]}
@@ -588,6 +1019,8 @@ export default function LeavesPage() {
             </table>
           </div>
         </div>
+          </>
+        )}
       </div>
     </DashboardLayout>
   )

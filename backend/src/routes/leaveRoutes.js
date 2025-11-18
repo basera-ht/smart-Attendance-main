@@ -198,6 +198,38 @@ router.post('/', authenticate, [
       });
     }
 
+    // Check paid leave limit: 2 paid leaves per month
+    // Get the month and year of the leave start date
+    const leaveMonth = start.getMonth(); // 0-11
+    const leaveYear = start.getFullYear();
+    
+    // Count approved and pending paid leaves for this employee in the same month
+    // This prevents employees from submitting multiple paid leaves before approval
+    const monthStart = new Date(leaveYear, leaveMonth, 1);
+    monthStart.setHours(0, 0, 0, 0);
+    const monthEnd = new Date(leaveYear, leaveMonth + 1, 0);
+    monthEnd.setHours(23, 59, 59, 999);
+    
+    // Count leaves that have any overlap with the month
+    // A leave overlaps if: startDate <= monthEnd AND endDate >= monthStart
+    const paidLeavesCount = await Leave.countDocuments({
+      employee: req.user._id,
+      status: { $in: ['approved', 'pending'] }, // Count both approved and pending
+      isPaid: true,
+      startDate: { $lte: monthEnd }, // Leave starts before or during the month
+      endDate: { $gte: monthStart }   // Leave ends after or during the month
+    });
+
+    // Determine if this leave should be paid or unpaid
+    let finalIsPaid = isPaid !== undefined ? isPaid : true;
+    let autoUnpaidMessage = null;
+    
+    // If employee has already taken 2 or more paid leaves this month, force unpaid
+    if (paidLeavesCount >= 2) {
+      finalIsPaid = false;
+      autoUnpaidMessage = `You have already used your 2 paid leaves for this month. This leave will be marked as unpaid.`;
+    }
+
     const leaveData = {
       employee: req.user._id,
       leaveType,
@@ -205,7 +237,7 @@ router.post('/', authenticate, [
       endDate: end,
       reason: trimmedReason,
       attachments: attachments || [],
-      isPaid: isPaid !== undefined ? isPaid : true // Default to paid leave if not specified
+      isPaid: finalIsPaid
     };
 
     try {
@@ -228,8 +260,9 @@ router.post('/', authenticate, [
 
       res.status(201).json({
         success: true,
-        message: 'Leave request submitted successfully',
-        data: leave
+        message: autoUnpaidMessage || 'Leave request submitted successfully',
+        data: leave,
+        ...(autoUnpaidMessage && { warning: autoUnpaidMessage })
       });
     } catch (createError) {
       console.error('Mongoose create error:', createError);
@@ -295,6 +328,7 @@ router.put('/:id', authenticate, [
     }
 
     const { leaveType, startDate, endDate, reason, status, reviewComments, attachments, isPaid } = req.body;
+    let autoUnpaidMessage = null; // Track if leave was auto-set to unpaid
 
     // Employees can only update pending leaves
     if (isEmployee) {
@@ -313,14 +347,57 @@ router.put('/:id', authenticate, [
         });
       }
 
-      // Update fields
-      if (leaveType) leave.leaveType = leaveType;
-      if (startDate) leave.startDate = new Date(startDate);
-      if (endDate) leave.endDate = new Date(endDate);
-      if (reason) leave.reason = reason;
-      if (attachments) leave.attachments = attachments;
-      if (isPaid !== undefined) leave.isPaid = isPaid;
-      if (status === 'cancelled') leave.status = 'cancelled';
+      // Determine dates for paid leave check
+      const checkStartDate = startDate ? new Date(startDate) : leave.startDate;
+      const checkEndDate = endDate ? new Date(endDate) : leave.endDate;
+      
+      // Check paid leave limit if dates or isPaid are being updated
+      if ((startDate || endDate || isPaid !== undefined) && (status !== 'cancelled')) {
+        const checkMonth = checkStartDate.getMonth();
+        const checkYear = checkStartDate.getFullYear();
+        const monthStart = new Date(checkYear, checkMonth, 1);
+        monthStart.setHours(0, 0, 0, 0);
+        const monthEnd = new Date(checkYear, checkMonth + 1, 0);
+        monthEnd.setHours(23, 59, 59, 999);
+        
+        // Count approved and pending paid leaves in the same month, excluding current leave
+        // A leave overlaps if: startDate <= monthEnd AND endDate >= monthStart
+        const paidLeavesCount = await Leave.countDocuments({
+          employee: req.user._id,
+          _id: { $ne: leave._id }, // Exclude current leave
+          status: { $in: ['approved', 'pending'] },
+          isPaid: true,
+          startDate: { $lte: monthEnd }, // Leave starts before or during the month
+          endDate: { $gte: monthStart }   // Leave ends after or during the month
+        });
+        
+        // Determine final isPaid value
+        let finalIsPaid = isPaid !== undefined ? isPaid : leave.isPaid;
+        
+        // If employee has already taken 2 or more paid leaves this month, force unpaid
+        if (paidLeavesCount >= 2 && finalIsPaid) {
+          finalIsPaid = false;
+          autoUnpaidMessage = `You have already used your 2 paid leaves for this month. This leave will be marked as unpaid.`;
+        }
+        
+        // Update fields
+        if (leaveType) leave.leaveType = leaveType;
+        if (startDate) leave.startDate = new Date(startDate);
+        if (endDate) leave.endDate = new Date(endDate);
+        if (reason) leave.reason = reason;
+        if (attachments) leave.attachments = attachments;
+        leave.isPaid = finalIsPaid;
+        if (status === 'cancelled') leave.status = 'cancelled';
+      } else {
+        // Update fields without paid leave check
+        if (leaveType) leave.leaveType = leaveType;
+        if (startDate) leave.startDate = new Date(startDate);
+        if (endDate) leave.endDate = new Date(endDate);
+        if (reason) leave.reason = reason;
+        if (attachments) leave.attachments = attachments;
+        if (isPaid !== undefined) leave.isPaid = isPaid;
+        if (status === 'cancelled') leave.status = 'cancelled';
+      }
     }
 
     // Admin/HR can approve/reject
@@ -369,10 +446,20 @@ router.put('/:id', authenticate, [
       });
     }
 
+    // Get the autoUnpaidMessage if it was set (for employee updates)
+    let responseMessage = 'Leave request updated successfully';
+    let responseWarning = null;
+    
+    if (isEmployee && autoUnpaidMessage) {
+      responseMessage = autoUnpaidMessage;
+      responseWarning = autoUnpaidMessage;
+    }
+    
     res.json({
       success: true,
-      message: 'Leave request updated successfully',
-      data: leave
+      message: responseMessage,
+      data: leave,
+      ...(responseWarning && { warning: responseWarning })
     });
   } catch (error) {
     console.error('Update leave error:', error);
