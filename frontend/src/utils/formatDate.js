@@ -14,6 +14,6 @@ export const formatTime = (date) => {
 
 export const formatDateTime = (date) => {
   if (!date) return ''
-  const dateObj = typeof date === 'string' ? parseISO(date) : date
+  const dateObj = typeof date === 'string' ? parseISO(date) : date 
   return format(dateObj, 'dd/MM/yyyy HH:mm:ss')
 }

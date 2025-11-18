@@ -16,6 +16,7 @@ export default function Attendance() {
   const [activeTab, setActiveTab] = useState('today') // 'today' or 'calendar'
   const [todayRecord, setTodayRecord] = useState(null)
   const [quickActionLoading, setQuickActionLoading] = useState(false)
+  const [bulkCheckInLoading, setBulkCheckInLoading] = useState(false)
   const isAdmin = hasAnyRole(['admin', 'hr'])
 
   // Helper function to retry API calls on 429 errors
@@ -307,6 +308,88 @@ export default function Attendance() {
     return 'Unknown'
   }
 
+  const handleMarkAllPresent = async () => {
+    if (bulkCheckInLoading) return
+    
+    // Get all employees who haven't checked in today
+    const employeesNotCheckedIn = employees.filter(emp => {
+      const employeeId = emp._id
+      const attendanceRecord = attendance.find(record => {
+        const recordEmployeeId = getEmployeeIdFromRecord(record)
+        return recordEmployeeId && recordEmployeeId.toString() === employeeId.toString()
+      })
+      
+      if (!attendanceRecord) return true // No record means not checked in
+      
+      const checkInTime = attendanceRecord.checkIn?.time || attendanceRecord.checkIn
+      return !checkInTime
+    })
+
+    if (employeesNotCheckedIn.length === 0) {
+      alert('All employees have already checked in today!')
+      return
+    }
+
+    // Confirm action
+    const confirmed = window.confirm(
+      `Are you sure you want to mark ${employeesNotCheckedIn.length} employee(s) as present?`
+    )
+    
+    if (!confirmed) return
+
+    try {
+      setBulkCheckInLoading(true)
+      let successCount = 0
+      let failCount = 0
+      const errors = []
+
+      // Process each employee
+      for (const emp of employeesNotCheckedIn) {
+        try {
+          const response = await attendanceAPI.adminCheckIn({
+            employeeId: emp._id,
+            location: 'Office',
+            notes: `Bulk check-in by admin: ${user.name}`
+          })
+          
+          if (response.data && response.data.success) {
+            successCount++
+          } else {
+            failCount++
+            errors.push(`${emp.name}: ${response.data?.message || 'Failed'}`)
+          }
+        } catch (err) {
+          failCount++
+          const errorMsg = err.response?.data?.message || 'Check-in failed'
+          errors.push(`${emp.name}: ${errorMsg}`)
+        }
+      }
+
+      // Refresh attendance data
+      const attendanceResponse = await retryApiCall(() => attendanceAPI.getTodayAttendance())
+      if (attendanceResponse.data && attendanceResponse.data.success) {
+        const data = attendanceResponse.data.data
+        setAttendance(Array.isArray(data) ? data : [data])
+      }
+
+      // Show results
+      if (failCount === 0) {
+        alert(`✓ Successfully marked ${successCount} employee(s) as present!`)
+      } else {
+        alert(
+          `Marked ${successCount} employee(s) as present.\n` +
+          `Failed: ${failCount} employee(s).\n\n` +
+          `Errors:\n${errors.join('\n')}`
+        )
+      }
+    } catch (err) {
+      console.error('Bulk check-in error:', err)
+      alert('Error during bulk check-in. Please try again.')
+    } finally {
+      setBulkCheckInLoading(false)
+    }
+  }
+
   if (loading) {
     return (
       <DashboardLayout>
@@ -341,6 +424,28 @@ export default function Attendance() {
             )}
             {isAdmin && (
               <div className="flex items-center space-x-2">
+                <button
+                  onClick={handleMarkAllPresent}
+                  disabled={bulkCheckInLoading || employees.length === 0}
+                  className="bg-blue-500 hover:bg-blue-600 disabled:bg-gray-400 disabled:cursor-not-allowed text-white px-6 py-2 rounded-lg font-medium transition-colors flex items-center space-x-2"
+                >
+                  {bulkCheckInLoading ? (
+                    <>
+                      <svg className="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                      </svg>
+                      <span>Processing...</span>
+                    </>
+                  ) : (
+                    <>
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                      <span>Mark All Present</span>
+                    </>
+                  )}
+                </button>
                 <select
                   value={selectedEmployee}
                   onChange={(e) => setSelectedEmployee(e.target.value)}
